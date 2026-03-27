@@ -160,5 +160,26 @@ Returns the workspace struct."
              :key #'emacs-superset-workspace-name
              :test #'equal)))
 
+(defun emacs-superset--current-workspace ()
+  "Return the workspace for the current tab, or nil.
+Detects by matching the tab name against \"superset:<name>\" or by
+matching `default-directory' against a tracked workspace path."
+  (or
+   ;; Match by tab name
+   (when-let* ((tab (tab-bar--current-tab))
+               (tab-name (alist-get 'name tab))
+               ((string-match "\\`superset:\\(.+\\)\\'" tab-name))
+               (ws-name (match-string 1 tab-name)))
+     (cl-find ws-name (emacs-superset--all-workspaces)
+              :key #'emacs-superset-workspace-name
+              :test #'equal))
+   ;; Match by default-directory
+   (emacs-superset--get-workspace default-directory)))
+
+(defun emacs-superset--read-workspace-or-current (prompt)
+  "Return the current workspace if in one, otherwise prompt with PROMPT."
+  (or (emacs-superset--current-workspace)
+      (emacs-superset--read-workspace prompt)))
+
 (provide 'emacs-superset-core)
 ;;; emacs-superset-core.el ends here

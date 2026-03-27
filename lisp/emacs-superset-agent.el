@@ -20,7 +20,7 @@
 AGENT-TYPE overrides the workspace's configured type.
 PROMPT is an optional initial prompt string to send to the agent."
   (interactive
-   (let* ((ws (emacs-superset--read-workspace "Launch agent in: "))
+   (let* ((ws (emacs-superset--read-workspace-or-current "Launch agent in: "))
           (type (intern
                  (completing-read
                   "Agent type: "
@@ -127,7 +127,7 @@ If ORIGINAL-SENTINEL is non-nil, call it first (to preserve eat's sentinel)."
 
 (defun emacs-superset-agent-stop (workspace)
   "Stop the agent running in WORKSPACE."
-  (interactive (list (emacs-superset--read-workspace "Stop agent in: ")))
+  (interactive (list (emacs-superset--read-workspace-or-current "Stop agent in: ")))
   (let ((proc (emacs-superset-workspace-agent-process workspace)))
     (if (and proc (process-live-p proc))
         (progn
@@ -159,7 +159,7 @@ Also updates the workspace struct if the process has died."
 
 (defun emacs-superset-agent-switch-to-terminal (workspace)
   "Switch to the agent terminal buffer for WORKSPACE."
-  (interactive (list (emacs-superset--read-workspace "Terminal for workspace: ")))
+  (interactive (list (emacs-superset--read-workspace-or-current "Terminal for workspace: ")))
   ;; First switch to the workspace tab
   (emacs-superset-tab-switch workspace)
   ;; Then select the terminal buffer/window
