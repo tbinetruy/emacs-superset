@@ -57,6 +57,42 @@ Returns the new workspace struct."
       (message "Created workspace: %s (branch: %s)" name branch)
       ws)))
 
+(defun emacs-superset-worktree-create-from-branch (branch)
+  "Create a workspace by checking out an existing BRANCH.
+The workspace name is derived from the branch name with slashes
+replaced by dashes."
+  (interactive
+   (list (magit-read-branch "Branch")))
+  (let* ((name (replace-regexp-in-string "/" "-" branch))
+         (repo-root (emacs-superset--repo-root))
+         (wt-base (emacs-superset--worktree-base-path repo-root))
+         (wt-path (expand-file-name name wt-base)))
+    ;; Validate
+    (when (emacs-superset--get-workspace wt-path)
+      (user-error "Workspace %s already exists" name))
+    (when (file-exists-p wt-path)
+      (user-error "Directory %s already exists" wt-path))
+    ;; Create parent directory if needed
+    (make-directory (file-name-directory wt-path) t)
+    ;; Checkout existing branch into worktree (no -b flag)
+    (let ((default-directory repo-root))
+      (magit-run-git "worktree" "add" wt-path branch))
+    ;; Build workspace struct
+    (let ((ws (emacs-superset-workspace-create
+               :path wt-path
+               :branch branch
+               :name name
+               :base-branch (magit-get-current-branch)
+               :agent-type emacs-superset-default-agent
+               :created-at (float-time))))
+      (emacs-superset--register-workspace ws)
+      (when (fboundp 'emacs-superset-tab-create)
+        (emacs-superset-tab-create ws))
+      (when (fboundp 'emacs-superset-config-run-setup)
+        (emacs-superset-config-run-setup ws))
+      (message "Created workspace: %s (branch: %s)" name branch)
+      ws)))
+
 ;;; Worktree deletion
 
 (defun emacs-superset-worktree-delete (workspace &optional force)

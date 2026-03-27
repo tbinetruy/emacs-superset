@@ -35,10 +35,11 @@
   "Emacs Superset - Agent Orchestrator."
   [:description emacs-superset-transient--status-line]
   ["Workspaces"
-   ("c" "Create workspace"    emacs-superset-worktree-create)
-   ("s" "Switch to workspace" emacs-superset-transient-switch)
-   ("d" "Delete workspace"    emacs-superset-transient-delete)
-   ("l" "Dashboard"           emacs-superset-dashboard)]
+   ("c" "Create workspace"       emacs-superset-worktree-create)
+   ("b" "Create from branch"     emacs-superset-worktree-create-from-branch)
+   ("s" "Switch to workspace"    emacs-superset-transient-switch)
+   ("d" "Delete workspace"       emacs-superset-transient-delete)
+   ("l" "Dashboard"              emacs-superset-dashboard)]
   ["Agent"
    ("a" "Launch agent"          emacs-superset-transient-launch)
    ("k" "Stop agent"            emacs-superset-transient-stop)
