@@ -1,0 +1,248 @@
+#+title: emacs-superset
+#+author: Thomas
+
+An agent orchestrator for Emacs, inspired by [[https://superset.sh/][superset.sh]].
+
+Run multiple AI coding agents (Claude Code, Gemini CLI, aider, OpenCode, ...) in
+parallel on the same codebase without conflicts -- all from within Emacs.
+
+* Philosophy
+
+Rather than building yet another tool from scratch, emacs-superset composes
+battle-tested Emacs packages into an orchestration layer:
+
+| Concern              | Delegated to        |
+|----------------------+---------------------|
+| Git operations       | [[https://magit.vc/][magit]]               |
+| Terminal emulation   | [[https://codeberg.org/akib/emacs-eat][eat]]                 |
+| Command menus        | [[https://github.com/magit/transient][transient]]           |
+| Workspace tabs       | built-in tab-bar    |
+| Project detection    | built-in project.el |
+| Diff review          | magit-diff          |
+
+emacs-superset is the glue: it creates worktrees, opens tabs, launches agents,
+and provides a dashboard to monitor everything.
+
+* Features
+
+- *Worktree management* -- create isolated git worktrees per task with a single command
+- *Agent-agnostic* -- run any CLI agent (Claude Code, Gemini CLI, aider, OpenCode, or custom) in an eat terminal
+- *Tab-per-workspace* -- each worktree gets its own tab with editor + terminal split
+- *Dashboard* -- monitor all workspaces: agent status, uncommitted changes, sync state
+- *Transient menus* -- keyboard-driven UI via =M-x emacs-superset=
+- *Diff review* -- review agent changes per workspace via magit
+- *Auto-discovery* -- picks up existing worktrees from =git worktree list= across restarts
+- *Context-aware* -- commands auto-detect the current workspace when invoked from a workspace tab
+- *Setup/teardown hooks* -- run scripts on workspace creation and deletion
+- *superset.sh compatible config* -- share =.superset/config.json= with teams using superset.sh
+
+* Requirements
+
+- Emacs 29.1+
+- [[https://magit.vc/][magit]] 4.0+
+- [[https://github.com/magit/transient][transient]] 0.7+
+- [[https://codeberg.org/akib/emacs-eat][eat]] 0.9+
+
+* Installation
+
+** Doom Emacs
+
+In =packages.el=:
+
+#+begin_src emacs-lisp
+(package! emacs-superset :recipe (:local-repo "~/code/emacs_superset" :files ("lisp/*.el")))
+#+end_src
+
+In =config.el=:
+
+#+begin_src emacs-lisp
+(use-package! emacs-superset
+  :commands (emacs-superset emacs-superset-dispatch emacs-superset-dashboard
+             emacs-superset-worktree-create emacs-superset-worktree-delete))
+
+;; Optional: bind to SPC g w
+(map! :leader :desc "Superset" "g w" #'emacs-superset)
+#+end_src
+
+Then run =doom sync= and restart Emacs.
+
+** straight.el / elpaca
+
+#+begin_src emacs-lisp
+(straight-use-package
+ '(emacs-superset :type git :local-repo "~/code/emacs_superset" :files ("lisp/*.el")))
+#+end_src
+
+** Manual
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/code/emacs_superset/lisp/")
+(require 'emacs-superset)
+#+end_src
+
+* Usage
+
+** Quick start
+
+1. Open any file in a git repo
+2. =M-x emacs-superset= (or =SPC g w= if bound) to open the transient menu
+3. Press =c= to create a workspace -- you'll be prompted for a name and base branch
+4. Press =a= to launch an agent in the workspace
+5. Press =l= to open the dashboard and monitor all workspaces
+
+** Transient menu (=M-x emacs-superset=)
+
+#+begin_example
+Workspaces
+  c  Create workspace
+  s  Switch to workspace
+  d  Delete workspace
+  l  Dashboard
+
+Agent
+  a  Launch agent
+  k  Stop agent
+  t  Switch to terminal
+  x  Run commands
+
+Review
+  r  Diff vs base branch
+  u  Uncommitted changes
+  m  Magit status in worktree
+#+end_example
+
+** Dashboard keybindings
+
+| Key   | Action                    |
+|-------+---------------------------|
+| =RET= | Switch to workspace tab   |
+| =c=   | Create workspace          |
+| =d=   | Delete workspace          |
+| =a=   | Launch agent              |
+| =s=   | Stop agent                |
+| =r=   | Diff review               |
+| =t=   | Switch to terminal        |
+| =m=   | Magit status              |
+| =R=   | Refresh git state for all |
+| =g=   | Refresh dashboard         |
+
+** Worktree layout
+
+New worktrees are created under a sibling =worktrees/= directory:
+
+#+begin_example
+~/code/
+  myproject/            <-- main repo
+  worktrees/
+    myproject/
+      fix-login/        <-- workspace worktree
+      add-tests/        <-- workspace worktree
+#+end_example
+
+Existing worktrees (created manually or by other tools) anywhere on disk are also
+discovered and shown in the dashboard.
+
+* Configuration
+
+** Project setup hooks (superset.sh compatible)
+
+Create =.superset/config.json= in your project root:
+
+#+begin_src json
+{
+  "setup": ["npm install", "cp .env.example .env"],
+  "teardown": ["docker-compose down"],
+  "run": ["npm run dev"]
+}
+#+end_src
+
+- *setup* runs automatically when a workspace is created
+- *teardown* runs automatically when a workspace is deleted
+- *run* is triggered on-demand (=x= in the transient menu)
+
+This file is compatible with [[https://superset.sh/][superset.sh]], so teams can share one config across both tools.
+
+For personal overrides, create =.superset/config.local.json= (add to =.gitignore=).
+
+*** Environment variables
+
+Scripts receive these variables:
+
+| Variable                    | Value                   |
+|-----------------------------+-------------------------|
+| =SUPERSET_ROOT_PATH=       | Main repo root          |
+| =SUPERSET_WORKSPACE_NAME=  | Workspace name          |
+| =SUPERSET_WORKSPACE_PATH=  | Worktree path           |
+| =EMACS_SUPERSET_ROOT=      | (same, emacs-prefixed)  |
+| =EMACS_SUPERSET_WORKSPACE= | (same, emacs-prefixed)  |
+| =EMACS_SUPERSET_PATH=      | (same, emacs-prefixed)  |
+
+** Config lookup order
+
+First match wins (no merging):
+
+1. =.superset/config.local.json= -- personal overrides (gitignored)
+2. =.superset/config.json= -- project default (committed)
+3. =.emacs-superset.el= -- Emacs-native alist format
+4. =.dir-locals.el= -- Emacs-native variables
+
+** Emacs-native config (alternative to JSON)
+
+In =.dir-locals.el=:
+
+#+begin_src emacs-lisp
+((nil . ((emacs-superset-setup-commands . ("npm install"))
+         (emacs-superset-teardown-commands . ("docker-compose down")))))
+#+end_src
+
+Or in =.emacs-superset.el=:
+
+#+begin_src emacs-lisp
+((setup . ("npm install"))
+ (teardown . ("docker-compose down"))
+ (run . ("npm run dev")))
+#+end_src
+
+** Customization
+
+| Variable                                    | Default          | Description                      |
+|---------------------------------------------+------------------+----------------------------------|
+| =emacs-superset-worktree-base-dir=          | ="worktrees"=    | Sibling dir for new worktrees    |
+| =emacs-superset-default-agent=              | ='claude-code=   | Default agent type               |
+| =emacs-superset-branch-prefix=              | ="superset/"=    | Prefix for created branches      |
+| =emacs-superset-tab-layout=                 | ='below=         | Terminal split: ='below= or ='right= |
+| =emacs-superset-agent-types=                | (alist)          | Agent type to CLI command mapping |
+| =emacs-superset-dashboard-auto-refresh-interval= | =5=         | Dashboard refresh seconds (nil to disable) |
+
+** Custom agent types
+
+#+begin_src emacs-lisp
+(add-to-list 'emacs-superset-agent-types '(my-agent . "my-agent-cli"))
+#+end_src
+
+* Running tests
+
+#+begin_src sh
+emacs --batch -L lisp/ -L test/ -l ert -l emacs-superset-test -f ert-run-tests-batch-and-exit
+#+end_src
+
+* Architecture
+
+#+begin_example
+lisp/
+  emacs-superset.el           -- entry point
+  emacs-superset-core.el      -- workspace struct, hash table, helpers
+  emacs-superset-worktree.el  -- create/delete/list/reconcile via magit
+  emacs-superset-tab.el       -- tab-bar integration
+  emacs-superset-agent.el     -- agent launcher via eat terminals
+  emacs-superset-config.el    -- config loading, setup/teardown hooks
+  emacs-superset-dashboard.el -- tabulated-list monitoring buffer
+  emacs-superset-transient.el -- transient menus
+  emacs-superset-diff.el      -- magit-diff wrappers
+test/
+  emacs-superset-test.el      -- ERT test suite
+#+end_example
+
+* License
+
+GPL-3.0-or-later
