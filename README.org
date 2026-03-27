@@ -95,6 +95,7 @@ Then run =doom sync= and restart Emacs.
 #+begin_example
 Workspaces
   c  Create workspace
+  b  Create from branch
   s  Switch to workspace
   d  Delete workspace
   l  Dashboard
