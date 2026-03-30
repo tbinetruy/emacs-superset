@@ -71,14 +71,15 @@ name or path to run in the terminal."
   (base-branch nil :documentation "Branch this worktree was created from.")
   (tab-name nil :documentation "Name of the tab-bar tab for this workspace.")
   (agent-type nil :documentation "Symbol from `emacs-superset-agent-types'.")
-  (agent-status 'idle :documentation "One of: idle, running, done, error.")
+  (agent-status 'idle :documentation "One of: idle, running, waiting, done, error.")
   (agent-buffer nil :documentation "Buffer running the agent terminal.")
   (agent-process nil :documentation "Process object for the agent.")
   (uncommitted 0 :documentation "Number of uncommitted changes.")
   (ahead 0 :documentation "Commits ahead of upstream.")
   (behind 0 :documentation "Commits behind upstream.")
   (created-at nil :documentation "Creation time as float-time.")
-  (setup-ran-p nil :documentation "Whether setup hooks have completed."))
+  (setup-ran-p nil :documentation "Whether setup hooks have completed.")
+  (status-changed-at 0.0 :documentation "Float-time when agent-status last changed."))
 
 ;;; Central state
 

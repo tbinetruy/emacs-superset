@@ -31,21 +31,26 @@ PROMPT is an optional initial prompt string to send to the agent."
                                    emacs-superset-default-agent)))))
           (p (read-string "Initial prompt (empty to skip): ")))
      (list ws type (if (string-empty-p p) nil p))))
-  ;; Resolve agent type and command
-  (let* ((type (or agent-type
-                   (emacs-superset-workspace-agent-type workspace)
-                   emacs-superset-default-agent))
-         (cmd (or (alist-get type emacs-superset-agent-types)
-                  (user-error "Unknown agent type: %s" type)))
-         (name (emacs-superset-workspace-name workspace))
-         (path (emacs-superset-workspace-path workspace))
-         (buf-name (format "*superset:%s*" name)))
-    ;; Don't launch if already running
-    (when (eq (emacs-superset-workspace-agent-status workspace) 'running)
-      (user-error "Agent already running in workspace %s" name))
-    ;; Switch to workspace tab if it exists
-    (when (emacs-superset-workspace-tab-name workspace)
-      (emacs-superset-tab-switch workspace))
+  ;; Resolve agent type
+  (let ((type (or agent-type
+                  (emacs-superset-workspace-agent-type workspace)
+                  emacs-superset-default-agent)))
+    ;; Always ensure hooks are installed for claude-code
+    (when (and (eq type 'claude-code)
+               (fboundp 'emacs-superset-hooks-install))
+      (emacs-superset-hooks-install workspace))
+    ;; If already running, just show the terminal
+    (if (eq (emacs-superset-workspace-agent-status workspace) 'running)
+        (emacs-superset-agent-switch-to-terminal workspace)
+      ;; Resolve command and launch
+      (let* ((cmd (or (alist-get type emacs-superset-agent-types)
+                      (user-error "Unknown agent type: %s" type)))
+             (name (emacs-superset-workspace-name workspace))
+             (path (emacs-superset-workspace-path workspace))
+             (buf-name (format "*superset:%s*" name)))
+        ;; Switch to workspace tab if it exists
+        (when (emacs-superset-workspace-tab-name workspace)
+          (emacs-superset-tab-switch workspace))
     ;; Kill existing placeholder/dead buffer
     (when-let ((old-buf (get-buffer buf-name)))
       (unless (get-buffer-process old-buf)
@@ -77,7 +82,7 @@ PROMPT is an optional initial prompt string to send to the agent."
            (emacs-superset-agent--make-sentinel workspace eat-sentinel))))
       ;; Display the terminal in the workspace's terminal window
       (emacs-superset-agent--display-terminal workspace)
-      (message "Launched %s in workspace %s" type name))))
+      (message "Launched %s in workspace %s" type name))))))
 
 (defun emacs-superset-agent--make-sentinel (workspace &optional original-sentinel)
   "Return a process sentinel that updates WORKSPACE on agent exit.

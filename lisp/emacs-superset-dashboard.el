@@ -128,6 +128,7 @@ Automatically discovers workspaces from the current repo's worktrees."
   (pcase status
     ('idle    (propertize "idle"    'face 'shadow))
     ('running (propertize "running" 'face 'success))
+    ('waiting (propertize "waiting" 'face 'warning))
     ('done    (propertize "done"    'face 'font-lock-string-face))
     ('error   (propertize "error"   'face 'error))
     (_        (propertize "-"       'face 'shadow))))

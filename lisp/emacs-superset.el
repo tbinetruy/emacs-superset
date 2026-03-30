@@ -40,6 +40,7 @@
 (require 'emacs-superset-transient)
 (require 'emacs-superset-diff)
 (require 'emacs-superset-config)
+(require 'emacs-superset-hooks)
 
 (defconst emacs-superset-version "0.1.0"
   "Version of emacs-superset.")
