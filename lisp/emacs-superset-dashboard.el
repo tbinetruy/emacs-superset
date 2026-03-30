@@ -43,6 +43,10 @@ Set to nil to disable auto-refresh."
     (define-key map (kbd "m") #'emacs-superset-dashboard-magit-at-point)
     (define-key map (kbd "R") #'emacs-superset-dashboard-refresh-all-git)
     (define-key map (kbd "?") #'emacs-superset-dashboard-help)
+    ;; Bind RET in evil states too
+    (when (bound-and-true-p evil-mode)
+      (evil-define-key* '(normal motion) map
+        (kbd "RET") #'emacs-superset-dashboard-switch-at-point))
     map)
   "Keymap for `emacs-superset-dashboard-mode'.")
 
