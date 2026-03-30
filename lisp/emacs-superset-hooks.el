@@ -151,40 +151,35 @@ Claude Code reads when running inside a worktree)."
 
 ;;; Hook callbacks (called by emacsclient from the hook script)
 
-(defun emacs-superset-hooks--on-activity (workspace-path)
-  "Handle UserPromptSubmit or PreToolUse for WORKSPACE-PATH.
-Sets the agent status to `running' — Claude is actively working."
+(defun emacs-superset-hooks--set-status (workspace-path status)
+  "Set agent status to STATUS for workspace at WORKSPACE-PATH.
+Also updates the timestamp and refreshes the dashboard if visible."
   (when-let ((ws (emacs-superset--get-workspace workspace-path)))
-    (setf (emacs-superset-workspace-agent-status ws) 'running)
-    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))))
+    (setf (emacs-superset-workspace-agent-status ws) status)
+    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))
+    ;; Schedule lightweight dashboard redraw on next command loop iteration
+    (when (fboundp 'emacs-superset-dashboard-redraw)
+      (run-at-time 0 nil #'emacs-superset-dashboard-redraw))))
+
+(defun emacs-superset-hooks--on-activity (workspace-path)
+  "Handle UserPromptSubmit/PreToolUse/PostToolUse for WORKSPACE-PATH."
+  (emacs-superset-hooks--set-status workspace-path 'running))
 
 (defun emacs-superset-hooks--on-stop (workspace-path)
-  "Handle Stop hook event for WORKSPACE-PATH.
-Sets the agent status to `done' — Claude finished its turn."
-  (when-let ((ws (emacs-superset--get-workspace workspace-path)))
-    (setf (emacs-superset-workspace-agent-status ws) 'done)
-    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))))
+  "Handle Stop hook event for WORKSPACE-PATH."
+  (emacs-superset-hooks--set-status workspace-path 'done))
 
 (defun emacs-superset-hooks--on-error (workspace-path)
-  "Handle StopFailure hook event for WORKSPACE-PATH.
-Sets the agent status to `error' — an API error occurred."
-  (when-let ((ws (emacs-superset--get-workspace workspace-path)))
-    (setf (emacs-superset-workspace-agent-status ws) 'error)
-    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))))
+  "Handle StopFailure hook event for WORKSPACE-PATH."
+  (emacs-superset-hooks--set-status workspace-path 'error))
 
 (defun emacs-superset-hooks--on-notification (workspace-path)
-  "Handle Notification hook event for WORKSPACE-PATH.
-Sets the agent status to `waiting' — Claude needs permission or input."
-  (when-let ((ws (emacs-superset--get-workspace workspace-path)))
-    (setf (emacs-superset-workspace-agent-status ws) 'waiting)
-    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))))
+  "Handle Notification/PermissionRequest hook event for WORKSPACE-PATH."
+  (emacs-superset-hooks--set-status workspace-path 'waiting))
 
 (defun emacs-superset-hooks--on-session-end (workspace-path)
-  "Handle SessionEnd hook event for WORKSPACE-PATH.
-Sets the agent status to `idle' — the Claude Code session has ended."
-  (when-let ((ws (emacs-superset--get-workspace workspace-path)))
-    (setf (emacs-superset-workspace-agent-status ws) 'idle)
-    (setf (emacs-superset-workspace-status-changed-at ws) (float-time))))
+  "Handle SessionEnd hook event for WORKSPACE-PATH."
+  (emacs-superset-hooks--set-status workspace-path 'idle))
 
 ;;; Cleanup
 

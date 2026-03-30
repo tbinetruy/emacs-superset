@@ -156,12 +156,24 @@ Automatically discovers workspaces from the current repo's worktrees."
     (setq emacs-superset-dashboard--timer nil)))
 
 (defun emacs-superset-dashboard--auto-refresh ()
-  "Auto-refresh the dashboard if visible."
+  "Auto-refresh the dashboard if it exists.
+Runs full git state refresh."
   (when-let ((buf (get-buffer "*emacs-superset*")))
-    (when (get-buffer-window buf)
-      (with-current-buffer buf
-        (emacs-superset-dashboard--refresh)
-        (tabulated-list-print t t)))))
+    (with-current-buffer buf
+      (emacs-superset-dashboard--refresh)
+      (tabulated-list-print t t))))
+
+(defun emacs-superset-dashboard-redraw ()
+  "Lightweight redraw of the dashboard from current workspace state.
+Skips git state refresh — just rebuilds entries and reprints."
+  (when-let ((buf (get-buffer "*emacs-superset*")))
+    (with-current-buffer buf
+      (let ((pos (point)))
+        (setq tabulated-list-entries
+              (mapcar #'emacs-superset-dashboard--make-entry
+                      (emacs-superset--all-workspaces)))
+        (tabulated-list-print)
+        (goto-char (min pos (point-max)))))))
 
 ;;; Interactive commands (operate on workspace at point)
 
