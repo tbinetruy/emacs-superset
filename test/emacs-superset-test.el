@@ -14,9 +14,18 @@
 (require 'emacs-superset-core)
 
 ;; Stub out external dependencies for unit tests
+(unless (featurep 'magit-section)
+  (provide 'magit-section)
+  (defvar magit-section-mode-map (make-sparse-keymap))
+  (defun magit-section-mode ())
+  (defmacro magit-insert-section (_args &rest body) `(progn ,@body))
+  (defmacro magit-insert-heading (&rest _args))
+  (defun magit-current-section () nil))
+
 (unless (featurep 'magit)
   (provide 'magit)
   (defun magit-run-git (&rest _args))
+  (defun magit-read-branch (&rest _args) "main")
   (defun magit-read-branch-or-commit (&rest _args) "main")
   (defun magit-get-current-branch () "main")
   (defun magit-list-worktrees () nil)
@@ -196,58 +205,25 @@
   (should-not (emacs-superset-config--safe-string-list-p "string"))
   (should-not (emacs-superset-config--safe-string-list-p '("ok" 42))))
 
-;;; ---- Dashboard: entry formatting ----
+;;; ---- Dashboard: status indicator formatting ----
 
-(ert-deftest emacs-superset-test-dashboard-entry ()
-  "Dashboard entry is formatted correctly from workspace."
-  (let ((ws (emacs-superset-workspace-create
-             :path "/tmp/test-wt"
-             :branch "superset/feature"
-             :name "feature"
-             :agent-type 'claude-code
-             :agent-status 'running
-             :uncommitted 3
-             :ahead 2
-             :behind 1)))
-    (let ((entry (emacs-superset-dashboard--make-entry ws)))
-      ;; ID is the path
-      (should (equal (car entry) "/tmp/test-wt"))
-      (let ((vec (cadr entry)))
-        (should (equal (aref vec 0) "feature"))
-        (should (equal (aref vec 1) "superset/feature"))
-        (should (equal (aref vec 2) "claude-code"))
-        ;; Status has text properties, check underlying string
-        (should (equal (substring-no-properties (aref vec 3)) "running"))
-        (should (equal (aref vec 4) "3"))
-        (should (equal (aref vec 5) "+2/-1"))))))
-
-(ert-deftest emacs-superset-test-dashboard-entry-zero-changes ()
-  "Zero uncommitted changes shows empty string."
-  (let* ((ws (emacs-superset-workspace-create
-              :path "/tmp/wt" :name "x" :branch "b"
-              :uncommitted 0 :ahead 0 :behind 0))
-         (entry (emacs-superset-dashboard--make-entry ws))
-         (vec (cadr entry)))
-    (should (equal (aref vec 4) ""))
-    (should (equal (aref vec 5) "+0/-0"))))
-
-(ert-deftest emacs-superset-test-format-status ()
-  "Status formatting returns correct text."
+(ert-deftest emacs-superset-test-status-indicator ()
+  "Status indicators return correct text."
   (should (equal (substring-no-properties
-                  (emacs-superset-dashboard--format-status 'idle))
-                 "idle"))
+                  (emacs-superset-dashboard--status-indicator 'idle))
+                 "○ idle"))
   (should (equal (substring-no-properties
-                  (emacs-superset-dashboard--format-status 'running))
-                 "running"))
+                  (emacs-superset-dashboard--status-indicator 'running))
+                 "● running"))
   (should (equal (substring-no-properties
-                  (emacs-superset-dashboard--format-status 'done))
-                 "done"))
+                  (emacs-superset-dashboard--status-indicator 'waiting))
+                 "◌ waiting"))
   (should (equal (substring-no-properties
-                  (emacs-superset-dashboard--format-status 'error))
-                 "error"))
+                  (emacs-superset-dashboard--status-indicator 'done))
+                 "✓ done"))
   (should (equal (substring-no-properties
-                  (emacs-superset-dashboard--format-status nil))
-                 "-")))
+                  (emacs-superset-dashboard--status-indicator 'error))
+                 "✗ error")))
 
 ;;; ---- Integration: worktree create/delete with real git ----
 
