@@ -95,16 +95,19 @@ replaced by dashes."
 
 ;;; Worktree deletion
 
-(defun emacs-superset-worktree-delete (workspace &optional force)
-  "Delete WORKSPACE worktree and optionally its branch.
-With prefix arg FORCE, force removal even with uncommitted changes."
+(defun emacs-superset-worktree-delete (workspace &optional _force)
+  "Delete WORKSPACE worktree and its branch."
   (interactive
    (list (emacs-superset--read-workspace "Delete workspace: ")
          current-prefix-arg))
-  (let ((name (emacs-superset-workspace-name workspace))
-        (path (emacs-superset-workspace-path workspace))
-        (branch (emacs-superset-workspace-branch workspace)))
-    (when (yes-or-no-p (format "Delete workspace %s? " name))
+  (let* ((name (emacs-superset-workspace-name workspace))
+         (path (emacs-superset-workspace-path workspace))
+         (branch (emacs-superset-workspace-branch workspace))
+         (dirty-p (not (zerop (emacs-superset-workspace-uncommitted workspace))))
+         (prompt (if dirty-p
+                     (format "Workspace %s has uncommitted changes. Delete anyway? " name)
+                   (format "Delete workspace %s? " name))))
+    (when (yes-or-no-p prompt)
       ;; Run teardown hooks if configured
       (when (fboundp 'emacs-superset-config-run-teardown)
         (emacs-superset-config-run-teardown workspace))
@@ -119,15 +122,13 @@ With prefix arg FORCE, force removal even with uncommitted changes."
       ;; Close tab
       (when (fboundp 'emacs-superset-tab-close)
         (emacs-superset-tab-close workspace))
-      ;; Remove worktree
+      ;; Remove worktree (always force — user already confirmed)
       (let ((default-directory (emacs-superset--repo-root)))
-        (if force
-            (magit-run-git "worktree" "remove" "--force" path)
-          (magit-run-git "worktree" "remove" path)))
-      ;; Delete branch (best effort)
+        (magit-run-git "worktree" "remove" "--force" path))
+      ;; Delete branch (best effort, use -D since worktree may not be merged)
       (condition-case nil
           (let ((default-directory (emacs-superset--repo-root)))
-            (magit-run-git "branch" "-d" branch))
+            (magit-run-git "branch" "-D" branch))
         (error nil))
       ;; Unregister
       (emacs-superset--unregister-workspace workspace)
