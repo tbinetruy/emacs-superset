@@ -39,11 +39,11 @@
    ("b" "Create from branch"     emacs-superset-worktree-create-from-branch)
    ("s" "Switch to workspace"    emacs-superset-transient-switch)
    ("d" "Delete workspace"       emacs-superset-transient-delete)
-   ("l" "Dashboard"              emacs-superset-dashboard)]
+   ("l" "Toggle dashboard"       emacs-superset-dashboard-toggle)
+   ("t" "Workspace terminal"     emacs-superset-transient-workspace-terminal)]
   ["Agent"
    ("a" "Launch agent"          emacs-superset-transient-launch)
    ("k" "Stop agent"            emacs-superset-transient-stop)
-   ("t" "Switch to terminal"    emacs-superset-transient-terminal)
    ("x" "Run commands"          emacs-superset-transient-run)]
   ["Review"
    ("r" "Diff vs base branch"     emacs-superset-transient-diff)
@@ -81,6 +81,17 @@
   (interactive)
   (emacs-superset-agent-switch-to-terminal
    (emacs-superset--read-workspace "Terminal for workspace: ")))
+
+(defun emacs-superset-transient-workspace-terminal ()
+  "Switch to the workspace shell terminal."
+  (interactive)
+  (let* ((ws (emacs-superset--read-workspace-or-current "Terminal for workspace: "))
+         (name (emacs-superset-workspace-name ws))
+         (buf-name (format "*eat:superset:%s*" name)))
+    (emacs-superset-tab-switch ws)
+    (if-let ((buf (get-buffer buf-name)))
+        (switch-to-buffer buf)
+      (user-error "No terminal for workspace %s" name))))
 
 (defun emacs-superset-transient-run ()
   "Run on-demand commands for a workspace."
