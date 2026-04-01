@@ -40,7 +40,8 @@
    ("s" "Switch to workspace"    emacs-superset-transient-switch)
    ("d" "Delete workspace"       emacs-superset-transient-delete)
    ("l" "Toggle dashboard"       emacs-superset-dashboard-toggle)
-   ("t" "Workspace terminal"     emacs-superset-transient-workspace-terminal)]
+   ("t" "Switch terminal"        emacs-superset-transient-workspace-terminal)
+   ("n" "New terminal"           emacs-superset-tab-new-terminal)]
   ["Agent"
    ("a" "Launch agent"          emacs-superset-transient-launch)
    ("k" "Stop agent"            emacs-superset-transient-stop)
@@ -93,15 +94,23 @@
     (message "Reinstalled hooks for %d workspace(s)" count)))
 
 (defun emacs-superset-transient-workspace-terminal ()
-  "Switch to the workspace shell terminal."
+  "Switch to a workspace shell terminal.
+If the workspace has multiple terminals, show a completing-read by name."
   (interactive)
   (let* ((ws (emacs-superset--read-workspace-or-current "Terminal for workspace: "))
          (name (emacs-superset-workspace-name ws))
-         (buf-name (emacs-superset--term-buf-name name)))
+         (terms (emacs-superset--workspace-terminal-buffers name)))
     (emacs-superset-tab-switch ws)
-    (if-let ((buf (get-buffer buf-name)))
-        (switch-to-buffer buf)
-      (user-error "No terminal for workspace %s" name))))
+    (pcase (length terms)
+      (0 (user-error "No terminal for workspace %s" name))
+      (1 (switch-to-buffer (car terms)))
+      (_ (let* ((names (mapcar (lambda (buf)
+                                 (cons (or (emacs-superset--term-display-name buf)
+                                           (buffer-name buf))
+                                       buf))
+                               terms))
+                (chosen (completing-read "Terminal: " (mapcar #'car names) nil t)))
+           (switch-to-buffer (alist-get chosen names nil nil #'equal)))))))
 
 (defun emacs-superset-transient-run ()
   "Run on-demand commands for a workspace."

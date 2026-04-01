@@ -211,14 +211,22 @@ tracked workspaces whose worktrees no longer exist on disk."
   workspace)
 
 (defun emacs-superset-worktree--listening-ports (workspace)
-  "Return a list of listening TCP port numbers for WORKSPACE's process tree."
+  "Return a list of listening TCP port numbers for WORKSPACE's process trees.
+Scans all terminal buffers (shell terminals + agent) for the workspace."
   (condition-case nil
-      (let ((buf (or (emacs-superset-workspace-agent-buffer workspace)
-                     (get-buffer (emacs-superset--term-buf-name
-                                  (emacs-superset-workspace-name workspace))))))
-        (when-let ((proc (and buf (get-buffer-process buf)))
-                   (pid (process-id proc)))
-          (emacs-superset-worktree--ports-for-pid-tree pid)))
+      (let* ((name (emacs-superset-workspace-name workspace))
+             (term-bufs (emacs-superset--workspace-terminal-buffers name))
+             (agent-buf (emacs-superset-workspace-agent-buffer workspace))
+             (all-bufs (if (and agent-buf (buffer-live-p agent-buf))
+                           (cons agent-buf term-bufs)
+                         term-bufs))
+             (all-ports nil))
+        (dolist (buf all-bufs)
+          (when-let ((proc (get-buffer-process buf))
+                     (pid (process-id proc))
+                     (ports (emacs-superset-worktree--ports-for-pid-tree pid)))
+            (setq all-ports (append all-ports ports))))
+        (sort (delete-dups all-ports) #'<))
     (error nil)))
 
 (defun emacs-superset-worktree--ports-for-pid-tree (pid)

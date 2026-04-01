@@ -239,6 +239,11 @@ If already visible, select it. Otherwise, create it on the left side."
       (when-let ((agent-type (emacs-superset-workspace-agent-type workspace)))
         (insert (propertize (format "  agent:  %s\n" agent-type)
                             'face 'emacs-superset-detail)))
+      ;; Terminal count if > 1
+      (let ((term-count (length (emacs-superset--workspace-terminal-buffers name))))
+        (when (> term-count 1)
+          (insert (propertize (format "  terms:  %d\n" term-count)
+                              'face 'emacs-superset-detail))))
       ;; Listening ports
       (when-let ((ports (emacs-superset-workspace-ports workspace)))
         (insert (propertize (format "  ports:  %s\n"

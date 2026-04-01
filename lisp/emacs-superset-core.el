@@ -193,9 +193,34 @@ matching `default-directory' against a tracked workspace path."
 
 ;;; Terminal backend abstraction
 
-(defun emacs-superset--term-buf-name (workspace-name)
-  "Return the terminal buffer name for WORKSPACE-NAME."
-  (format "*term:superset:%s*" workspace-name))
+(defcustom emacs-superset-default-terminal-name "main"
+  "Default name for the first terminal in a workspace."
+  :type 'string
+  :group 'emacs-superset)
+
+(defun emacs-superset--term-buf-name (workspace-name &optional terminal-name)
+  "Return the terminal buffer name for WORKSPACE-NAME with TERMINAL-NAME.
+TERMINAL-NAME defaults to `emacs-superset-default-terminal-name'."
+  (format "*term:superset:%s:%s*" workspace-name
+          (or terminal-name emacs-superset-default-terminal-name)))
+
+(defun emacs-superset--term-buf-prefix (workspace-name)
+  "Return the buffer name prefix for all terminals of WORKSPACE-NAME."
+  (format "*term:superset:%s:" workspace-name))
+
+(defun emacs-superset--workspace-terminal-buffers (workspace-name)
+  "Return a list of live terminal buffers for WORKSPACE-NAME."
+  (let ((prefix (emacs-superset--term-buf-prefix workspace-name)))
+    (seq-filter (lambda (buf)
+                  (string-prefix-p prefix (buffer-name buf)))
+                (buffer-list))))
+
+(defun emacs-superset--term-display-name (buf)
+  "Extract the terminal display name from buffer BUF.
+E.g. *term:superset:my-ws:server* -> server."
+  (let ((name (buffer-name buf)))
+    (when (string-match ":\\([^:*]+\\)\\*\\'" name)
+      (match-string 1 name))))
 
 (defun emacs-superset--term-create-shell (buf-name directory)
   "Create a shell terminal buffer named BUF-NAME in DIRECTORY.

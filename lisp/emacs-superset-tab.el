@@ -23,7 +23,7 @@
     ;; Create a new tab
     (tab-bar-new-tab 1)
     (tab-bar-rename-tab (format "superset:%s" name))
-    ;; Open a named terminal in the worktree
+    ;; Open the default terminal in the worktree
     (delete-other-windows)
     (let* ((buf-name (emacs-superset--term-buf-name name))
            (buf (get-buffer buf-name)))
@@ -69,12 +69,35 @@ Emacs will prompt for confirmation if any buffer has a running process."
         (tab-bar-close-tab-by-name tab-name)
       (error nil))
     (setf (emacs-superset-workspace-tab-name workspace) nil))
-  ;; Kill workspace buffers (shell terminal, agent terminal)
+  ;; Kill all workspace buffers (all shell terminals + agent terminal)
   (let ((name (emacs-superset-workspace-name workspace)))
-    (dolist (buf-name (list (emacs-superset--term-buf-name name)
-                            (format "*superset:%s*" name)))
-      (when-let ((buf (get-buffer buf-name)))
-        (kill-buffer buf)))))
+    (dolist (buf (emacs-superset--workspace-terminal-buffers name))
+      (kill-buffer buf))
+    (when-let ((agent-buf (get-buffer (format "*superset:%s*" name))))
+      (kill-buffer agent-buf))))
+
+;;; New terminal
+
+(defun emacs-superset-tab-new-terminal (workspace &optional terminal-name)
+  "Create a new named terminal in WORKSPACE and switch to it."
+  (interactive
+   (let ((ws (emacs-superset--read-workspace-or-current
+              "New terminal in workspace: ")))
+     (list ws (read-string "Terminal name: "))))
+  (let* ((name (emacs-superset-workspace-name workspace))
+         (path (emacs-superset-workspace-path workspace))
+         (term-name (if (string-empty-p (or terminal-name ""))
+                        (format "term-%d" (1+ (length (emacs-superset--workspace-terminal-buffers name))))
+                      terminal-name))
+         (buf-name (emacs-superset--term-buf-name name term-name)))
+    (when (get-buffer buf-name)
+      (user-error "Terminal %s already exists in %s" term-name name))
+    ;; Switch to workspace tab first
+    (emacs-superset-tab-switch workspace)
+    ;; Create and show the new terminal in same window
+    (switch-to-buffer
+     (emacs-superset--term-create-shell buf-name path))
+    (message "Terminal '%s' for %s" term-name name)))
 
 ;;; Placeholder mode for the terminal slot
 
@@ -97,12 +120,12 @@ Press \\[emacs-superset-agent-launch-here] to start an agent."
 TAB is the alist of the closed tab."
   (let ((tab-name (alist-get 'name tab)))
     (when (and tab-name (string-prefix-p "superset:" tab-name))
-      (let* ((ws-name (substring tab-name (length "superset:")))
-             (term-buf (get-buffer (emacs-superset--term-buf-name ws-name)))
-             (agent-buf (get-buffer (format "*superset:%s*" ws-name))))
-        ;; Kill workspace buffers
-        (when term-buf (kill-buffer term-buf))
-        (when agent-buf (kill-buffer agent-buf))
+      (let ((ws-name (substring tab-name (length "superset:"))))
+        ;; Kill all workspace buffers
+        (dolist (buf (emacs-superset--workspace-terminal-buffers ws-name))
+          (kill-buffer buf))
+        (when-let ((agent-buf (get-buffer (format "*superset:%s*" ws-name))))
+          (kill-buffer agent-buf))
         ;; Clear tab-name on the workspace struct
         (dolist (ws (emacs-superset--all-workspaces))
           (when (equal (emacs-superset-workspace-name ws) ws-name)
