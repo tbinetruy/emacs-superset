@@ -205,7 +205,48 @@ tracked workspaces whose worktrees no longer exist on disk."
         ;; No upstream configured
         (setf (emacs-superset-workspace-ahead workspace) 0)
         (setf (emacs-superset-workspace-behind workspace) 0))))
+  ;; Listening ports for the workspace's terminal process tree
+  (setf (emacs-superset-workspace-ports workspace)
+        (emacs-superset-worktree--listening-ports workspace))
   workspace)
+
+(defun emacs-superset-worktree--listening-ports (workspace)
+  "Return a list of listening TCP port numbers for WORKSPACE's process tree."
+  (condition-case nil
+      (let ((buf (or (emacs-superset-workspace-agent-buffer workspace)
+                     (get-buffer (emacs-superset--term-buf-name
+                                  (emacs-superset-workspace-name workspace))))))
+        (when-let ((proc (and buf (get-buffer-process buf)))
+                   (pid (process-id proc)))
+          (emacs-superset-worktree--ports-for-pid-tree pid)))
+    (error nil)))
+
+(defun emacs-superset-worktree--ports-for-pid-tree (pid)
+  "Return listening TCP ports for PID and all its descendants."
+  (let ((output (string-trim
+                 (with-temp-buffer
+                   (call-process
+                    shell-file-name nil t nil shell-command-switch
+                    (format "
+get_pids() {
+  echo $1
+  for child in $(pgrep -P $1 2>/dev/null); do
+    get_pids $child
+  done
+}
+PIDS=$(get_pids %d | tr '\\n' '|' | sed 's/|$//')
+if [ -n \"$PIDS\" ]; then
+  for p in $(echo $PIDS | tr '|' ' '); do
+    ls -la /proc/$p/fd 2>/dev/null
+  done | grep socket | sed 's/.*socket:\\[\\([0-9]*\\)\\]/\\1/' | sort -u | while read inode; do
+    awk -v ino=\"$inode\" '$4==\"0A\" && $10==ino {split($2,a,\":\"); printf \"%%d\\n\", strtonum(\"0x\" a[2])}' /proc/net/tcp
+  done
+fi
+" pid))
+                   (buffer-string)))))
+    (when (not (string-empty-p output))
+      (sort (mapcar #'string-to-number (split-string output "\n" t))
+            #'<))))
 
 ;;; Session restore
 

@@ -82,6 +82,7 @@ name or path to run in the terminal."
   (agent-status 'idle :documentation "One of: idle, running, waiting, done, error.")
   (agent-buffer nil :documentation "Buffer running the agent terminal.")
   (agent-process nil :documentation "Process object for the agent.")
+  (ports nil :documentation "List of listening port numbers.")
   (uncommitted 0 :documentation "Number of uncommitted changes.")
   (ahead 0 :documentation "Commits ahead of upstream.")
   (behind 0 :documentation "Commits behind upstream.")

@@ -239,6 +239,11 @@ If already visible, select it. Otherwise, create it on the left side."
       (when-let ((agent-type (emacs-superset-workspace-agent-type workspace)))
         (insert (propertize (format "  agent:  %s\n" agent-type)
                             'face 'emacs-superset-detail)))
+      ;; Listening ports
+      (when-let ((ports (emacs-superset-workspace-ports workspace)))
+        (insert (propertize (format "  ports:  %s\n"
+                                    (mapconcat #'number-to-string ports ", "))
+                            'face 'emacs-superset-detail)))
       (insert "\n"))))
 
 ;;; Refresh
