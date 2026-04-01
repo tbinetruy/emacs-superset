@@ -57,12 +57,13 @@ Returns the new workspace struct."
 
 (defun emacs-superset-worktree-create (branch &optional base-branch)
   "Create a new workspace with a new BRANCH based on BASE-BRANCH.
-Prompts for the branch name and derives the workspace name from it."
+Prompts for the base branch first, then the new branch name."
   (interactive
-   (list (read-string (format "New branch name (%s prefix): "
-                              emacs-superset-branch-prefix)
-                      emacs-superset-branch-prefix)
-         (magit-read-branch-or-commit "Base branch" "HEAD")))
+   (let ((base (magit-read-branch-or-commit "Base branch" "HEAD")))
+     (list (read-string (format "New branch name (%s prefix): "
+                                emacs-superset-branch-prefix)
+                        emacs-superset-branch-prefix)
+           base)))
   (emacs-superset-worktree--create-internal
    branch (or base-branch "HEAD") t))
 
