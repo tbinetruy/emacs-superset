@@ -11,7 +11,6 @@
 ;;; Code:
 
 (require 'emacs-superset-core)
-(require 'eat)
 
 ;;; Agent launching
 
@@ -59,27 +58,19 @@ PROMPT is an optional initial prompt string to send to the agent."
     (let* ((full-cmd (if prompt
                          (format "%s %s" cmd (shell-quote-argument prompt))
                        cmd))
-           (default-directory (file-name-as-directory path))
-           (eat-buf (get-buffer-create buf-name)))
-      ;; Initialize eat in the buffer and launch the command
-      (with-current-buffer eat-buf
-        (unless (derived-mode-p 'eat-mode)
-          (eat-mode))
-        (setq default-directory (file-name-as-directory path)))
-      (eat-exec eat-buf buf-name shell-file-name nil
-                (list shell-command-switch full-cmd))
+           (term-buf (emacs-superset--term-exec buf-name path full-cmd)))
       ;; Update workspace struct
       (setf (emacs-superset-workspace-agent-type workspace) type)
       (setf (emacs-superset-workspace-agent-status workspace) 'running)
-      (setf (emacs-superset-workspace-agent-buffer workspace) eat-buf)
+      (setf (emacs-superset-workspace-agent-buffer workspace) term-buf)
       (setf (emacs-superset-workspace-agent-process workspace)
-            (get-buffer-process eat-buf))
-      ;; Chain our sentinel after eat's own sentinel to track agent exit
-      (when-let ((proc (get-buffer-process eat-buf)))
-        (let ((eat-sentinel (process-sentinel proc)))
+            (get-buffer-process term-buf))
+      ;; Chain our sentinel after the terminal's own sentinel to track agent exit
+      (when-let ((proc (get-buffer-process term-buf)))
+        (let ((orig-sentinel (process-sentinel proc)))
           (set-process-sentinel
            proc
-           (emacs-superset-agent--make-sentinel workspace eat-sentinel))))
+           (emacs-superset-agent--make-sentinel workspace orig-sentinel))))
       ;; Display the terminal in the workspace's terminal window
       (emacs-superset-agent--display-terminal workspace)
       (message "Launched %s in workspace %s" type name))))))

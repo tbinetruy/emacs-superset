@@ -39,6 +39,10 @@
   (defun eat-mode ())
   (defun eat-exec (&rest _args)))
 
+(unless (featurep 'vterm)
+  (provide 'vterm)
+  (defun vterm (&optional _name)))
+
 (require 'emacs-superset-worktree)
 (require 'emacs-superset-config)
 (require 'emacs-superset-dashboard)

@@ -50,6 +50,14 @@ For example, if the repo is at /code/myproject, worktrees go to
                  (const :tag "Terminal right" right))
   :group 'emacs-superset)
 
+(defcustom emacs-superset-terminal-backend 'eat
+  "Terminal emulator backend to use.
+`eat' uses the eat package (pure Elisp, no C deps).
+`vterm' uses vterm (faster, requires libvterm C library)."
+  :type '(choice (const :tag "eat" eat)
+                 (const :tag "vterm" vterm))
+  :group 'emacs-superset)
+
 (defcustom emacs-superset-agent-types
   '((claude-code . "claude")
     (gemini-cli  . "gemini")
@@ -181,6 +189,53 @@ matching `default-directory' against a tracked workspace path."
   "Return the current workspace if in one, otherwise prompt with PROMPT."
   (or (emacs-superset--current-workspace)
       (emacs-superset--read-workspace prompt)))
+
+;;; Terminal backend abstraction
+
+(defun emacs-superset--term-buf-name (workspace-name)
+  "Return the terminal buffer name for WORKSPACE-NAME."
+  (format "*term:superset:%s*" workspace-name))
+
+(defun emacs-superset--term-create-shell (buf-name directory)
+  "Create a shell terminal buffer named BUF-NAME in DIRECTORY.
+Returns the buffer."
+  (let ((default-directory (file-name-as-directory directory)))
+    (pcase emacs-superset-terminal-backend
+      ('eat
+       (require 'eat)
+       (let ((buf (get-buffer-create buf-name)))
+         (with-current-buffer buf
+           (setq default-directory (file-name-as-directory directory))
+           (eat-mode))
+         (eat-exec buf buf-name shell-file-name nil nil)
+         buf))
+      ('vterm
+       (require 'vterm)
+       (let ((vterm-shell shell-file-name)
+             (vterm-buffer-name buf-name))
+         (vterm buf-name))))))
+
+(defun emacs-superset--term-exec (buf-name directory command)
+  "Create a terminal buffer named BUF-NAME in DIRECTORY running COMMAND.
+Returns the buffer."
+  (let ((default-directory (file-name-as-directory directory)))
+    (pcase emacs-superset-terminal-backend
+      ('eat
+       (require 'eat)
+       (let ((buf (get-buffer-create buf-name)))
+         (with-current-buffer buf
+           (setq default-directory (file-name-as-directory directory))
+           (unless (derived-mode-p 'eat-mode)
+             (eat-mode)))
+         (eat-exec buf buf-name shell-file-name nil
+                   (list shell-command-switch command))
+         buf))
+      ('vterm
+       (require 'vterm)
+       (let* ((vterm-shell (format "%s %s %s" shell-file-name
+                                   shell-command-switch command))
+              (vterm-buffer-name buf-name))
+         (vterm buf-name))))))
 
 (provide 'emacs-superset-core)
 ;;; emacs-superset-core.el ends here

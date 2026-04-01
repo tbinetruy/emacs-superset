@@ -87,7 +87,7 @@
   (interactive)
   (let* ((ws (emacs-superset--read-workspace-or-current "Terminal for workspace: "))
          (name (emacs-superset-workspace-name ws))
-         (buf-name (format "*eat:superset:%s*" name)))
+         (buf-name (emacs-superset--term-buf-name name)))
     (emacs-superset-tab-switch ws)
     (if-let ((buf (get-buffer buf-name)))
         (switch-to-buffer buf)

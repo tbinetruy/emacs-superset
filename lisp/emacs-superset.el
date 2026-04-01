@@ -4,7 +4,7 @@
 
 ;; Author: Thomas
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (magit "4.0.0") (transient "0.7.0") (eat "0.9"))
+;; Package-Requires: ((emacs "29.1") (magit "4.0.0") (transient "0.7.0"))
 ;; Keywords: tools, processes, vc
 ;; URL: https://github.com/thomas/emacs-superset
 

@@ -13,7 +13,6 @@
 
 (require 'tab-bar)
 (require 'emacs-superset-core)
-(require 'eat)
 
 ;;; Tab creation
 
@@ -24,19 +23,14 @@
     ;; Create a new tab
     (tab-bar-new-tab 1)
     (tab-bar-rename-tab (format "superset:%s" name))
-    ;; Set default-directory to the worktree and open a named eat terminal
-    (setq default-directory (file-name-as-directory path))
+    ;; Open a named terminal in the worktree
     (delete-other-windows)
-    (let* ((buf-name (format "*eat:superset:%s*" name))
+    (let* ((buf-name (emacs-superset--term-buf-name name))
            (buf (get-buffer buf-name)))
       (if (and buf (buffer-live-p buf))
           (switch-to-buffer buf)
-        (setq buf (get-buffer-create buf-name))
-        (with-current-buffer buf
-          (setq default-directory (file-name-as-directory path))
-          (eat-mode))
-        (switch-to-buffer buf)
-        (eat-exec buf buf-name shell-file-name nil nil)))
+        (switch-to-buffer
+         (emacs-superset--term-create-shell buf-name path))))
     ;; Store the tab name
     (setf (emacs-superset-workspace-tab-name workspace)
           (format "superset:%s" name))
@@ -75,9 +69,9 @@ Emacs will prompt for confirmation if any buffer has a running process."
         (tab-bar-close-tab-by-name tab-name)
       (error nil))
     (setf (emacs-superset-workspace-tab-name workspace) nil))
-  ;; Kill workspace buffers (eat terminal, agent terminal)
+  ;; Kill workspace buffers (shell terminal, agent terminal)
   (let ((name (emacs-superset-workspace-name workspace)))
-    (dolist (buf-name (list (format "*eat:superset:%s*" name)
+    (dolist (buf-name (list (emacs-superset--term-buf-name name)
                             (format "*superset:%s*" name)))
       (when-let ((buf (get-buffer buf-name)))
         (kill-buffer buf)))))
@@ -104,10 +98,10 @@ TAB is the alist of the closed tab."
   (let ((tab-name (alist-get 'name tab)))
     (when (and tab-name (string-prefix-p "superset:" tab-name))
       (let* ((ws-name (substring tab-name (length "superset:")))
-             (eat-buf (get-buffer (format "*eat:superset:%s*" ws-name)))
+             (term-buf (get-buffer (emacs-superset--term-buf-name ws-name)))
              (agent-buf (get-buffer (format "*superset:%s*" ws-name))))
         ;; Kill workspace buffers
-        (when eat-buf (kill-buffer eat-buf))
+        (when term-buf (kill-buffer term-buf))
         (when agent-buf (kill-buffer agent-buf))
         ;; Clear tab-name on the workspace struct
         (dolist (ws (emacs-superset--all-workspaces))
