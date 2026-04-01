@@ -34,10 +34,6 @@ PROMPT is an optional initial prompt string to send to the agent."
   (let ((type (or agent-type
                   (emacs-superset-workspace-agent-type workspace)
                   emacs-superset-default-agent)))
-    ;; Always ensure hooks are installed for claude-code
-    (when (and (eq type 'claude-code)
-               (fboundp 'emacs-superset-hooks-install))
-      (emacs-superset-hooks-install workspace))
     ;; If already running, just show the terminal
     (if (eq (emacs-superset-workspace-agent-status workspace) 'running)
         (emacs-superset-agent-switch-to-terminal workspace)

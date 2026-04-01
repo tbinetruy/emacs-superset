@@ -44,7 +44,8 @@
   ["Agent"
    ("a" "Launch agent"          emacs-superset-transient-launch)
    ("k" "Stop agent"            emacs-superset-transient-stop)
-   ("x" "Run commands"          emacs-superset-transient-run)]
+   ("x" "Run commands"          emacs-superset-transient-run)
+   ("h" "Reinstall hooks"       emacs-superset-transient-reinstall-hooks)]
   ["Review"
    ("r" "Diff vs base branch"     emacs-superset-transient-diff)
    ("u" "Uncommitted changes"     emacs-superset-transient-diff-uncommitted)
@@ -81,6 +82,15 @@
   (interactive)
   (emacs-superset-agent-switch-to-terminal
    (emacs-superset--read-workspace "Terminal for workspace: ")))
+
+(defun emacs-superset-transient-reinstall-hooks ()
+  "Reinstall Claude Code hooks for all workspaces."
+  (interactive)
+  (let ((count 0))
+    (dolist (ws (emacs-superset--all-workspaces))
+      (emacs-superset-hooks-install ws)
+      (cl-incf count))
+    (message "Reinstalled hooks for %d workspace(s)" count)))
 
 (defun emacs-superset-transient-workspace-terminal ()
   "Switch to the workspace shell terminal."

@@ -48,6 +48,9 @@ Returns the new workspace struct."
                :agent-type emacs-superset-default-agent
                :created-at (float-time))))
       (emacs-superset--register-workspace ws)
+      ;; Install Claude Code hooks
+      (when (fboundp 'emacs-superset-hooks-install)
+        (emacs-superset-hooks-install ws))
       (when (fboundp 'emacs-superset-tab-create)
         (emacs-superset-tab-create ws))
       (when (fboundp 'emacs-superset-config-run-setup)
