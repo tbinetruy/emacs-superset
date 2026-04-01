@@ -174,8 +174,11 @@ tracked workspaces whose worktrees no longer exist on disk."
 ;;; Git state refresh
 
 (defun emacs-superset-worktree-refresh-git-state (workspace)
-  "Refresh git state (uncommitted, ahead, behind) for WORKSPACE."
+  "Refresh git state (branch, uncommitted, ahead, behind) for WORKSPACE."
   (let ((default-directory (emacs-superset-workspace-path workspace)))
+    ;; Current branch (may have changed)
+    (setf (emacs-superset-workspace-branch workspace)
+          (emacs-superset-worktree--branch-at default-directory))
     ;; Uncommitted changes count
     (setf (emacs-superset-workspace-uncommitted workspace)
           (length (seq-filter
