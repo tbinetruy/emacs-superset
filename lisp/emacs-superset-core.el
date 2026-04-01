@@ -37,7 +37,7 @@ For example, if the repo is at /code/myproject, worktrees go to
   :type '(symbol)
   :group 'emacs-superset)
 
-(defcustom emacs-superset-branch-prefix "superset/"
+(defcustom emacs-superset-branch-prefix "feat/"
   "Prefix for branches created by emacs-superset."
   :type 'string
   :group 'emacs-superset)
