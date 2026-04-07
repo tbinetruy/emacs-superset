@@ -45,7 +45,7 @@
                               40))
            (window-parameters
             (no-delete-other-windows . t)
-            (no-other-window . nil))))))))
+            (no-other-window . t))))))))
 
 ;;; Tab switching
 

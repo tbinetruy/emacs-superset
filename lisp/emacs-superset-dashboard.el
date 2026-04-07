@@ -143,7 +143,7 @@ If already visible, select it. Otherwise, create it on the left side."
                   (window-width . ,emacs-superset-dashboard-sidebar-width)
                   (window-parameters
                    (no-delete-other-windows . t)
-                   (no-other-window . nil))))))
+                   (no-other-window . t))))))
       (select-window win))))
 
 (defun emacs-superset-dashboard-close ()
