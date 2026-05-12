@@ -46,6 +46,8 @@
 (require 'emacs-superset-worktree)
 (require 'emacs-superset-config)
 (require 'emacs-superset-dashboard)
+(require 'emacs-superset-agent)
+(require 'emacs-superset-hooks)
 
 ;;; ---- Core: workspace struct ----
 
@@ -228,6 +230,103 @@
   (should (equal (substring-no-properties
                   (emacs-superset-dashboard--status-indicator 'error))
                  "✗ error")))
+
+;;; ---- Agent: Codex integration ----
+
+(ert-deftest emacs-superset-test-codex-build-command-json ()
+  "Codex launches with JSON events when an initial prompt is provided."
+  (let ((emacs-superset-codex-json-events t))
+    (should (equal (emacs-superset-agent--build-command
+                    'codex "codex" "/tmp/ws" "fix it")
+                   "codex exec --json --cd /tmp/ws fix\\ it"))))
+
+(ert-deftest emacs-superset-test-codex-build-command-interactive ()
+  "Codex launches in interactive mode when no prompt is provided."
+  (let ((emacs-superset-codex-json-events t))
+    (should (equal (emacs-superset-agent--build-command
+                    'codex "codex" "/tmp/ws" nil)
+                   "codex --no-alt-screen"))))
+
+(ert-deftest emacs-superset-test-codex-event-updates-status ()
+  "Codex JSONL events update workspace status."
+  (let ((ws (emacs-superset-workspace-create
+             :path "/tmp/codex-ws"
+             :name "codex-ws")))
+    (emacs-superset-agent--handle-codex-event
+     ws "{\"type\":\"turn.started\"}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'running))
+    (emacs-superset-agent--handle-codex-event
+     ws "{\"type\":\"approval.requested\"}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'waiting))
+    (emacs-superset-agent--handle-codex-event
+     ws "{\"type\":\"turn.completed\"}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'done))))
+
+(ert-deftest emacs-superset-test-codex-session-line-updates-status ()
+  "Codex TUI session JSONL events update workspace status."
+  (let ((ws (emacs-superset-workspace-create
+             :path "/tmp/codex-ws"
+             :name "codex-ws")))
+    (emacs-superset-agent--handle-codex-session-line
+     ws "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'running))
+    (emacs-superset-agent--handle-codex-session-line
+     ws "{\"type\":\"event_msg\",\"payload\":{\"type\":\"exec_approval_request\"}}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'waiting))
+    (emacs-superset-agent--handle-codex-session-line
+     ws "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}")
+    (should (eq (emacs-superset-workspace-agent-status ws) 'done))))
+
+(ert-deftest emacs-superset-test-codex-session-file-matches-workspace ()
+  "Codex session files are matched by session_meta cwd."
+  (let ((file (make-temp-file "codex-session" nil ".jsonl")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/tmp/codex-ws\"}}\n"))
+          (should (emacs-superset-agent--codex-session-file-matches-p
+                   file "/tmp/codex-ws"))
+          (should-not (emacs-superset-agent--codex-session-file-matches-p
+                       file "/tmp/other-ws")))
+      (delete-file file))))
+
+(ert-deftest emacs-superset-test-codex-hooks-merge ()
+  "Codex hook config merge installs one handler per event."
+  (let* ((script "/tmp/emacs-superset-codex-hook.sh")
+         (settings (emacs-superset-hooks--codex-merge-hooks nil script))
+         (hooks (alist-get 'hooks settings)))
+    (dolist (event emacs-superset-hooks--codex-events)
+      (let* ((event-hooks (alist-get event hooks))
+             (entry (aref event-hooks 0))
+             (handlers (alist-get 'hooks entry))
+             (handler (aref handlers 0)))
+        (should (equal (alist-get 'command handler) script))
+        (should (equal (alist-get 'type handler) "command"))))
+    (let* ((merged-again (emacs-superset-hooks--codex-merge-hooks settings script))
+           (event-hooks (alist-get 'Stop (alist-get 'hooks merged-again)))
+           (entry (aref event-hooks 0)))
+      (should (= (length (alist-get 'hooks entry)) 1)))))
+
+(ert-deftest emacs-superset-test-codex-hook-callbacks-update-current-workspace ()
+  "Codex hook callbacks update the workspace containing the hook cwd."
+  (let* ((tmpdir (make-temp-file "codex-ws" t))
+         (subdir (expand-file-name "subdir" tmpdir))
+         (emacs-superset--workspaces (make-hash-table :test 'equal))
+         (ws (emacs-superset-workspace-create
+              :path tmpdir
+              :name "codex-ws")))
+    (unwind-protect
+        (progn
+          (make-directory subdir)
+          (emacs-superset--register-workspace ws)
+          (emacs-superset-hooks--codex-on-activity subdir)
+          (should (eq (emacs-superset-workspace-agent-type ws) 'codex))
+          (should (eq (emacs-superset-workspace-agent-status ws) 'running))
+          (emacs-superset-hooks--codex-on-notification tmpdir)
+          (should (eq (emacs-superset-workspace-agent-status ws) 'waiting))
+          (emacs-superset-hooks--codex-on-stop tmpdir)
+          (should (eq (emacs-superset-workspace-agent-status ws) 'done)))
+      (delete-directory tmpdir t))))
 
 ;;; ---- Integration: worktree create/delete with real git ----
 

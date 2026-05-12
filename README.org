@@ -3,7 +3,7 @@
 
 An agent orchestrator for Emacs, inspired by [[https://superset.sh/][superset.sh]].
 
-Run multiple AI coding agents (Claude Code, Gemini CLI, aider, OpenCode, ...) in
+Run multiple AI coding agents (Claude Code, Codex, Gemini CLI, aider, OpenCode, ...) in
 parallel on the same codebase without conflicts -- all from within Emacs.
 
 * Philosophy
@@ -26,7 +26,7 @@ and provides a dashboard to monitor everything.
 * Features
 
 - *Worktree management* -- create isolated git worktrees per task with a single command
-- *Agent-agnostic* -- run any CLI agent (Claude Code, Gemini CLI, aider, OpenCode, or custom) in an eat terminal
+- *Agent-agnostic* -- run any CLI agent (Claude Code, Codex, Gemini CLI, aider, OpenCode, or custom) in an eat terminal
 - *Tab-per-workspace* -- each worktree gets its own tab with editor + terminal split
 - *Dashboard* -- monitor all workspaces: agent status, uncommitted changes, sync state
 - *Transient menus* -- keyboard-driven UI via =M-x emacs-superset=
@@ -213,6 +213,8 @@ Or in =.emacs-superset.el=:
 | =emacs-superset-branch-prefix=              | ="superset/"=    | Prefix for created branches      |
 | =emacs-superset-tab-layout=                 | ='below=         | Terminal split: ='below= or ='right= |
 | =emacs-superset-agent-types=                | (alist)          | Agent type to CLI command mapping |
+| =emacs-superset-codex-json-events=          | =t=              | Use =codex exec --json= for prompted Codex launches |
+| =emacs-superset-codex-session-watch=        | =nil=            | Fallback session JSONL watcher if Codex hooks cannot be installed |
 | =emacs-superset-dashboard-auto-refresh-interval= | =5=         | Dashboard refresh seconds (nil to disable) |
 
 ** Custom agent types
@@ -220,6 +222,21 @@ Or in =.emacs-superset.el=:
 #+begin_src emacs-lisp
 (add-to-list 'emacs-superset-agent-types '(my-agent . "my-agent-cli"))
 #+end_src
+
+Codex is included by default as:
+
+#+begin_src emacs-lisp
+(codex . "codex")
+#+end_src
+
+When launching Codex with an initial prompt, emacs-superset runs =codex exec
+--json= and observes Codex JSONL events so the dashboard side window updates as
+the Codex instance moves through running, waiting, done, and error states.
+For interactive Codex TUI sessions, emacs-superset installs Codex lifecycle
+hooks in =CODEX_HOME=, enables =codex_hooks= in =config.toml=, and writes
+=hooks.json=. These hooks update the dashboard on prompt submission, tool use,
+permission requests, and turn completion. The session JSONL watcher is only a
+fallback for environments where Codex hooks cannot be installed.
 
 * Running tests
 

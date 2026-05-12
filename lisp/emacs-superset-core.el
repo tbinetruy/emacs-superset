@@ -17,6 +17,7 @@
 
 (require 'cl-lib)
 (require 'project)
+(require 'subr-x)
 
 ;;; Customization group
 
@@ -60,6 +61,7 @@ For example, if the repo is at /code/myproject, worktrees go to
 
 (defcustom emacs-superset-agent-types
   '((claude-code . "claude")
+    (codex       . "codex")
     (gemini-cli  . "gemini")
     (opencode    . "opencode")
     (aider       . "aider"))
@@ -82,6 +84,9 @@ name or path to run in the terminal."
   (agent-status 'idle :documentation "One of: idle, running, waiting, done, error.")
   (agent-buffer nil :documentation "Buffer running the agent terminal.")
   (agent-process nil :documentation "Process object for the agent.")
+  (agent-session-file nil :documentation "Agent-specific session/event file, if known.")
+  (agent-session-offset 0 :documentation "Byte offset read in `agent-session-file'.")
+  (agent-watch-timer nil :documentation "Timer used to watch agent-specific state.")
   (ports nil :documentation "List of listening port numbers.")
   (uncommitted 0 :documentation "Number of uncommitted changes.")
   (ahead 0 :documentation "Commits ahead of upstream.")
@@ -159,6 +164,14 @@ are created, based on `emacs-superset-worktree-base-dir'."
   "Remove WORKSPACE from the central hash table."
   (remhash (emacs-superset--normalize-path (emacs-superset-workspace-path workspace))
            emacs-superset--workspaces))
+
+(defun emacs-superset--set-agent-status (workspace status)
+  "Set WORKSPACE agent status to STATUS and notify live UI."
+  (setf (emacs-superset-workspace-agent-status workspace) status)
+  (setf (emacs-superset-workspace-status-changed-at workspace) (float-time))
+  (when (and (get-buffer "*emacs-superset*")
+             (fboundp 'emacs-superset-dashboard-redraw))
+    (run-at-time 0 nil #'emacs-superset-dashboard-redraw)))
 
 (defun emacs-superset--read-workspace (prompt)
   "Read a workspace name with PROMPT using `completing-read'.
