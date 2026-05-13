@@ -355,18 +355,32 @@ Also updates the workspace struct if the process has died."
 
 ;;; Switch to terminal
 
+(defun emacs-superset-agent--workspace-terminal-buffer (workspace)
+  "Return the preferred terminal buffer for WORKSPACE.
+Prefer the agent terminal when it exists, otherwise fall back to the workspace's
+default shell terminal, then any live workspace terminal."
+  (let* ((name (emacs-superset-workspace-name workspace))
+         (agent-buf (emacs-superset-workspace-agent-buffer workspace))
+         (main-buf (get-buffer (emacs-superset--term-buf-name name)))
+         (term-bufs (emacs-superset--workspace-terminal-buffers name)))
+    (or (and (buffer-live-p agent-buf) agent-buf)
+        (and (buffer-live-p main-buf) main-buf)
+        (car term-bufs))))
+
+(defun emacs-superset-agent--select-terminal-buffer (buffer)
+  "Select BUFFER's window, or display BUFFER and select the new window."
+  (when (buffer-live-p buffer)
+    (let ((win (get-buffer-window buffer nil)))
+      (if win
+          (select-window win)
+        (pop-to-buffer buffer)))))
+
 (defun emacs-superset-agent-switch-to-terminal (workspace)
-  "Switch to the agent terminal buffer for WORKSPACE."
+  "Switch to WORKSPACE and select its preferred terminal buffer."
   (interactive (list (emacs-superset--read-workspace-or-current "Terminal for workspace: ")))
-  ;; First switch to the workspace tab
   (emacs-superset-tab-switch workspace)
-  ;; Then select the terminal buffer/window
-  (when-let ((buf (emacs-superset-workspace-agent-buffer workspace)))
-    (when (buffer-live-p buf)
-      (let ((win (get-buffer-window buf)))
-        (if win
-            (select-window win)
-          (pop-to-buffer buf))))))
+  (when-let ((buf (emacs-superset-agent--workspace-terminal-buffer workspace)))
+    (emacs-superset-agent--select-terminal-buffer buf)))
 
 (provide 'emacs-superset-agent)
 ;;; emacs-superset-agent.el ends here

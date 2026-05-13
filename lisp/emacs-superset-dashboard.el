@@ -318,10 +318,12 @@ Skips git state refresh — just rebuilds sections from struct data."
          (oref section value))))
 
 (defun emacs-superset-dashboard-switch-at-point ()
-  "Switch to the workspace or repo at point."
+  "Switch to the workspace terminal or repo at point."
   (interactive)
   (if-let ((ws (emacs-superset-dashboard--workspace-at-point)))
-      (emacs-superset-tab-switch ws)
+      (if (fboundp 'emacs-superset-agent-switch-to-terminal)
+          (emacs-superset-agent-switch-to-terminal ws)
+        (emacs-superset-tab-switch ws))
     ;; Check if on the repo section
     (when-let ((section (magit-current-section)))
       (if (eq (oref section type) 'superset-repo)
