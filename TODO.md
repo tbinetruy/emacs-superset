@@ -10,7 +10,7 @@ especially when starting in an `eat` terminal buffer.
      the agent/main terminal window.
    - Avoid landing focus back in the dashboard side window.
 
-2. [ ] Preserve dashboard point by workspace identity.
+2. [x] Preserve dashboard point by workspace identity.
    - Remember the workspace at point before dashboard refresh.
    - After redraw, jump back to that workspace section instead of restoring only
      the raw buffer position.

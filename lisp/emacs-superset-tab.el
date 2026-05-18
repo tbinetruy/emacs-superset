@@ -37,15 +37,18 @@
     ;; Re-show the dashboard side window if it was open
     (when-let ((dash-buf (get-buffer "*emacs-superset*")))
       (unless (get-buffer-window dash-buf)
-        (display-buffer-in-side-window
-         dash-buf
-         `((side . left)
-           (window-width . ,(if (boundp 'emacs-superset-dashboard-sidebar-width)
-                                emacs-superset-dashboard-sidebar-width
-                              40))
-           (window-parameters
-            (no-delete-other-windows . t)
-            (no-other-window . t))))))))
+        (let ((win
+               (display-buffer-in-side-window
+                dash-buf
+                `((side . left)
+                  (window-width . ,(if (boundp 'emacs-superset-dashboard-sidebar-width)
+                                       emacs-superset-dashboard-sidebar-width
+                                     40))
+                  (window-parameters
+                   (no-delete-other-windows . t)
+                   (no-other-window . t))))))
+          (when (fboundp 'emacs-superset-dashboard--restore-window-point)
+            (emacs-superset-dashboard--restore-window-point win)))))))
 
 ;;; Tab switching
 

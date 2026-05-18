@@ -231,6 +231,42 @@
                   (emacs-superset-dashboard--status-indicator 'error))
                  "✗ error")))
 
+(ert-deftest emacs-superset-test-dashboard-goto-workspace-path ()
+  "Dashboard can restore point by workspace path text property."
+  (with-temp-buffer
+    (insert "header\n")
+    (let ((alpha-start (point)))
+      (insert "alpha\n")
+      (add-text-properties
+       alpha-start (point)
+       (list emacs-superset-dashboard--workspace-path-prop "/tmp/alpha")))
+    (let ((bravo-start (point)))
+      (insert "bravo\n")
+      (add-text-properties
+       bravo-start (point)
+       (list emacs-superset-dashboard--workspace-path-prop "/tmp/bravo")))
+    (goto-char (point-min))
+    (should (emacs-superset-dashboard--goto-workspace-path "/tmp/bravo"))
+    (should (equal (get-text-property
+                    (point)
+                    emacs-superset-dashboard--workspace-path-prop)
+                   "/tmp/bravo"))
+    (should-not (emacs-superset-dashboard--goto-workspace-path "/tmp/missing"))))
+
+(ert-deftest emacs-superset-test-dashboard-update-selection-markers ()
+  "Dashboard can update selection markers without a full redraw."
+  (with-temp-buffer
+    (insert (emacs-superset-dashboard--workspace-marker t "/tmp/alpha"))
+    (insert "alpha\n")
+    (insert (emacs-superset-dashboard--workspace-marker nil "/tmp/bravo"))
+    (insert "bravo\n")
+    (emacs-superset-dashboard--update-selection-markers "/tmp/alpha" "/tmp/bravo")
+    (goto-char (point-min))
+    (should (equal (buffer-substring-no-properties (point) (+ (point) 2)) "  "))
+    (should (emacs-superset-dashboard--find-workspace-marker "/tmp/bravo"))
+    (goto-char (emacs-superset-dashboard--find-workspace-marker "/tmp/bravo"))
+    (should (equal (buffer-substring-no-properties (point) (+ (point) 2)) "› "))))
+
 ;;; ---- Agent: Codex integration ----
 
 (ert-deftest emacs-superset-test-codex-build-command-json ()

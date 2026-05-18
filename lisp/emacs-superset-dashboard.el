@@ -66,6 +66,11 @@ Set to nil to disable auto-refresh."
   "Face for detail lines (branch, stats)."
   :group 'emacs-superset)
 
+(defface emacs-superset-selected-workspace
+  '((t :inherit highlight))
+  "Face for the selected workspace indicator."
+  :group 'emacs-superset)
+
 ;;; Status formatting
 
 (defun emacs-superset-dashboard--status-indicator (status)
@@ -82,6 +87,17 @@ Set to nil to disable auto-refresh."
 
 (defvar emacs-superset-dashboard--timer nil
   "Timer for auto-refreshing the dashboard.")
+
+(defvar emacs-superset-dashboard--selected-workspace-path nil
+  "Normalized path of the currently selected dashboard workspace.")
+
+(defconst emacs-superset-dashboard--workspace-path-prop
+  'emacs-superset-workspace-path
+  "Text property used to preserve point on workspace sections.")
+
+(defconst emacs-superset-dashboard--workspace-marker-prop
+  'emacs-superset-workspace-marker
+  "Text property used to update workspace selection markers.")
 
 ;;; Dashboard mode
 
@@ -116,6 +132,9 @@ Set to nil to disable auto-refresh."
       (kbd "g R") #'emacs-superset-dashboard-refresh-all-git))
   ;; Start auto-refresh timer
   (emacs-superset-dashboard--start-timer)
+  (add-hook 'post-command-hook
+            #'emacs-superset-dashboard--update-selection-from-point
+            nil t)
   ;; Clean up timer when buffer is killed
   (add-hook 'kill-buffer-hook #'emacs-superset-dashboard--stop-timer nil t))
 
@@ -144,6 +163,7 @@ If already visible, select it. Otherwise, create it on the left side."
                   (window-parameters
                    (no-delete-other-windows . t)
                    (no-other-window . t))))))
+      (emacs-superset-dashboard--restore-window-point win)
       (select-window win))))
 
 (defun emacs-superset-dashboard-close ()
@@ -214,14 +234,19 @@ If already visible, select it. Otherwise, create it on the left side."
 (defun emacs-superset-dashboard--insert-workspace (workspace)
   "Insert a section for WORKSPACE."
   (let* ((name (emacs-superset-workspace-name workspace))
+         (path (emacs-superset--normalize-path
+                (emacs-superset-workspace-path workspace)))
+         (selected-p (equal path emacs-superset-dashboard--selected-workspace-path))
          (status (emacs-superset-workspace-agent-status workspace))
          (status-str (emacs-superset-dashboard--status-indicator status))
          (branch (or (emacs-superset-workspace-branch workspace) ""))
          (uncommitted (emacs-superset-workspace-uncommitted workspace))
          (ahead (emacs-superset-workspace-ahead workspace))
-         (behind (emacs-superset-workspace-behind workspace)))
+         (behind (emacs-superset-workspace-behind workspace))
+         (start (point)))
     (magit-insert-section (superset-workspace workspace)
       (magit-insert-heading
+        (emacs-superset-dashboard--workspace-marker selected-p path)
         status-str
         "  "
         (propertize name 'face 'emacs-superset-workspace-heading)
@@ -249,7 +274,110 @@ If already visible, select it. Otherwise, create it on the left side."
         (insert (propertize (format "  ports:  %s\n"
                                     (mapconcat #'number-to-string ports ", "))
                             'face 'emacs-superset-detail)))
-      (insert "\n"))))
+      (insert "\n"))
+    (add-text-properties
+     start (point)
+     (list emacs-superset-dashboard--workspace-path-prop path))))
+
+(defun emacs-superset-dashboard--workspace-path (workspace)
+  "Return normalized path for WORKSPACE."
+  (emacs-superset--normalize-path
+   (emacs-superset-workspace-path workspace)))
+
+(defun emacs-superset-dashboard--workspace-marker (selected-p path)
+  "Return a workspace selection marker for PATH.
+SELECTED-P controls whether the marker is visible."
+  (propertize (if selected-p "› " "  ")
+              'face (if selected-p
+                        'emacs-superset-selected-workspace
+                      'shadow)
+              emacs-superset-dashboard--workspace-marker-prop path
+              emacs-superset-dashboard--workspace-path-prop path))
+
+(defun emacs-superset-dashboard--select-workspace (workspace-or-path)
+  "Set the selected workspace from WORKSPACE-OR-PATH."
+  (setq emacs-superset-dashboard--selected-workspace-path
+        (if (stringp workspace-or-path)
+            (emacs-superset--normalize-path workspace-or-path)
+          (emacs-superset-dashboard--workspace-path workspace-or-path))))
+
+(defun emacs-superset-dashboard--update-selection-from-point ()
+  "Update dashboard selection when point is on a workspace section."
+  (when (derived-mode-p 'emacs-superset-dashboard-mode)
+    (when-let ((path (emacs-superset-dashboard--workspace-path-at-point)))
+      (unless (equal path emacs-superset-dashboard--selected-workspace-path)
+        (let ((previous emacs-superset-dashboard--selected-workspace-path))
+          (setq emacs-superset-dashboard--selected-workspace-path path)
+          (emacs-superset-dashboard--update-selection-markers previous path))))))
+
+(defun emacs-superset-dashboard--update-selection-markers (previous current)
+  "Update workspace selection markers for PREVIOUS and CURRENT paths."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (when previous
+        (emacs-superset-dashboard--set-workspace-marker previous nil))
+      (when current
+        (emacs-superset-dashboard--set-workspace-marker current t)))))
+
+(defun emacs-superset-dashboard--set-workspace-marker (path selected-p)
+  "Set workspace marker for PATH according to SELECTED-P."
+  (when-let ((pos (emacs-superset-dashboard--find-workspace-marker path)))
+    (goto-char pos)
+    (delete-char 2)
+    (insert (emacs-superset-dashboard--workspace-marker selected-p path))))
+
+(defun emacs-superset-dashboard--find-workspace-marker (path)
+  "Return the marker position for normalized workspace PATH, or nil."
+  (let ((pos (point-min))
+        found)
+    (while (and (not found) (< pos (point-max)))
+      (when (equal (get-text-property
+                    pos emacs-superset-dashboard--workspace-marker-prop)
+                   path)
+        (setq found pos))
+      (unless found
+        (setq pos (or (next-single-property-change
+                       pos emacs-superset-dashboard--workspace-marker-prop
+                       nil (point-max))
+                      (point-max)))))
+    found))
+
+(defun emacs-superset-dashboard--workspace-path-at-point ()
+  "Return the normalized workspace path at point, or nil."
+  (or (get-text-property
+       (point)
+       emacs-superset-dashboard--workspace-path-prop)
+      (when-let ((ws (emacs-superset-dashboard--workspace-at-point)))
+        (emacs-superset--normalize-path
+         (emacs-superset-workspace-path ws)))))
+
+(defun emacs-superset-dashboard--goto-workspace-path (path)
+  "Move point to the dashboard section for normalized workspace PATH.
+Return non-nil if the workspace section was found."
+  (let ((pos (point-min))
+        found)
+    (while (and (not found) (< pos (point-max)))
+      (setq pos (or (next-single-property-change
+                     pos emacs-superset-dashboard--workspace-path-prop
+                     nil (point-max))
+                    (point-max)))
+      (when (equal (get-text-property
+                    pos emacs-superset-dashboard--workspace-path-prop)
+                   path)
+        (setq found pos)))
+    (when found
+      (goto-char found)
+      t)))
+
+(defun emacs-superset-dashboard--restore-window-point (window)
+  "Restore WINDOW point to the selected workspace when possible."
+  (when (and (window-live-p window)
+             emacs-superset-dashboard--selected-workspace-path)
+    (with-current-buffer (window-buffer window)
+      (save-excursion
+        (when (emacs-superset-dashboard--goto-workspace-path
+               emacs-superset-dashboard--selected-workspace-path)
+          (set-window-point window (point)))))))
 
 ;;; Refresh
 
@@ -273,13 +401,19 @@ If already visible, select it. Otherwise, create it on the left side."
     ;; Redraw buffer
     (when-let ((buf (get-buffer "*emacs-superset*")))
       (with-current-buffer buf
-        (let ((inhibit-read-only t)
-              (pos (point)))
+        (let* ((inhibit-read-only t)
+               (win (get-buffer-window buf t))
+               (pos (if win (window-point win) (point))))
           (erase-buffer)
           (magit-insert-section (superset-root)
             (emacs-superset-dashboard--insert-repo)
             (emacs-superset-dashboard--insert workspaces))
-          (goto-char (min pos (point-max))))))))
+          (unless (and emacs-superset-dashboard--selected-workspace-path
+                       (emacs-superset-dashboard--goto-workspace-path
+                        emacs-superset-dashboard--selected-workspace-path))
+            (goto-char (min pos (point-max))))
+          (when (window-live-p win)
+            (set-window-point win (point))))))))
 
 (defun emacs-superset-dashboard-redraw ()
   "Lightweight redraw from current workspace state.
@@ -321,9 +455,11 @@ Skips git state refresh — just rebuilds sections from struct data."
   "Switch to the workspace terminal or repo at point."
   (interactive)
   (if-let ((ws (emacs-superset-dashboard--workspace-at-point)))
-      (if (fboundp 'emacs-superset-agent-switch-to-terminal)
-          (emacs-superset-agent-switch-to-terminal ws)
-        (emacs-superset-tab-switch ws))
+      (progn
+        (emacs-superset-dashboard--select-workspace ws)
+        (if (fboundp 'emacs-superset-agent-switch-to-terminal)
+            (emacs-superset-agent-switch-to-terminal ws)
+          (emacs-superset-tab-switch ws)))
     ;; Check if on the repo section
     (when-let ((section (magit-current-section)))
       (if (eq (oref section type) 'superset-repo)
