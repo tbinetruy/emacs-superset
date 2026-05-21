@@ -34,6 +34,7 @@
 
 (require 'emacs-superset-core)
 (require 'emacs-superset-worktree)
+(require 'emacs-superset-watch)
 (require 'emacs-superset-tab)
 (require 'emacs-superset-agent)
 (require 'emacs-superset-dashboard)

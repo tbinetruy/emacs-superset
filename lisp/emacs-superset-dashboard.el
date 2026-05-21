@@ -13,6 +13,7 @@
 
 (require 'emacs-superset-core)
 (require 'emacs-superset-worktree)
+(require 'emacs-superset-watch)
 (require 'magit-section)
 
 ;;; Customization
@@ -22,6 +23,18 @@
 Set to nil to disable auto-refresh."
   :type '(choice (integer :tag "Seconds")
                  (const :tag "Disabled" nil))
+  :group 'emacs-superset)
+
+(defcustom emacs-superset-dashboard-git-refresh-interval 30
+  "Seconds between background git state refreshes.
+Set to nil to disable automatic background git refresh."
+  :type '(choice (integer :tag "Seconds")
+                 (const :tag "Disabled" nil))
+  :group 'emacs-superset)
+
+(defcustom emacs-superset-dashboard-redraw-debounce 0.2
+  "Seconds to debounce dashboard redraw requests."
+  :type 'number
   :group 'emacs-superset)
 
 (defcustom emacs-superset-dashboard-sidebar-width 40
@@ -87,6 +100,12 @@ Set to nil to disable auto-refresh."
 
 (defvar emacs-superset-dashboard--timer nil
   "Timer for auto-refreshing the dashboard.")
+
+(defvar emacs-superset-dashboard--git-refresh-timer nil
+  "Timer for background git state refreshes.")
+
+(defvar emacs-superset-dashboard--redraw-timer nil
+  "Timer used to debounce dashboard redraw requests.")
 
 (defvar emacs-superset-dashboard--selected-workspace-path nil
   "Normalized path of the currently selected dashboard workspace.")
@@ -154,7 +173,9 @@ If already visible, select it. Otherwise, create it on the left side."
     (with-current-buffer buf
       (unless (derived-mode-p 'emacs-superset-dashboard-mode)
         (emacs-superset-dashboard-mode))
-      (emacs-superset-dashboard--do-refresh t))
+      (emacs-superset-worktree-reconcile)
+      (emacs-superset-dashboard--do-refresh nil)
+      (emacs-superset-dashboard--refresh-git-state-async))
     ;; Show as a persistent left side window
     (let ((win (display-buffer-in-side-window
                 buf
@@ -164,6 +185,7 @@ If already visible, select it. Otherwise, create it on the left side."
                    (no-delete-other-windows . t)
                    (no-other-window . t))))))
       (emacs-superset-dashboard--restore-window-point win)
+      (emacs-superset-watch-start)
       (select-window win))))
 
 (defun emacs-superset-dashboard-close ()
@@ -171,14 +193,17 @@ If already visible, select it. Otherwise, create it on the left side."
   (interactive)
   (when-let ((buf (get-buffer "*emacs-superset*")))
     (when-let ((win (get-buffer-window buf t)))
-      (delete-window win))))
+      (delete-window win)))
+  (emacs-superset-watch-stop))
 
 (defun emacs-superset-dashboard-toggle ()
   "Toggle the dashboard side window."
   (interactive)
   (if-let ((buf (get-buffer "*emacs-superset*"))
            (win (get-buffer-window buf t)))
-      (delete-window win)
+      (progn
+        (delete-window win)
+        (emacs-superset-watch-stop))
     (emacs-superset-dashboard)))
 
 ;;; Section insertion
@@ -382,13 +407,14 @@ Return non-nil if the workspace section was found."
 ;;; Refresh
 
 (defun emacs-superset-dashboard-refresh ()
-  "Full refresh: reconcile worktrees, refresh git state, redraw."
+  "Refresh workspace list and redraw from cached state."
   (interactive)
-  (emacs-superset-dashboard--do-refresh t))
+  (emacs-superset-worktree-reconcile)
+  (emacs-superset-dashboard--do-refresh nil))
 
 (defun emacs-superset-dashboard--do-refresh (full-git-p)
   "Refresh dashboard. If FULL-GIT-P, also refresh git state."
-  (let ((workspaces (emacs-superset-worktree-list)))
+  (let ((workspaces (emacs-superset--all-workspaces)))
     (when full-git-p
       (dolist (ws workspaces)
         (condition-case nil
@@ -420,28 +446,67 @@ Return non-nil if the workspace section was found."
 Skips git state refresh — just rebuilds sections from struct data."
   (emacs-superset-dashboard--do-refresh nil))
 
+(defun emacs-superset-dashboard-request-redraw ()
+  "Debounce a lightweight dashboard redraw."
+  (when (get-buffer-window "*emacs-superset*" t)
+    (when emacs-superset-dashboard--redraw-timer
+      (cancel-timer emacs-superset-dashboard--redraw-timer))
+    (setq emacs-superset-dashboard--redraw-timer
+          (run-at-time
+           emacs-superset-dashboard-redraw-debounce
+           nil
+           (lambda ()
+             (setq emacs-superset-dashboard--redraw-timer nil)
+             (emacs-superset-dashboard-redraw))))))
+
 ;;; Auto-refresh
 
 (defun emacs-superset-dashboard--start-timer ()
-  "Start the auto-refresh timer."
+  "Start dashboard auto-refresh timers."
   (emacs-superset-dashboard--stop-timer)
   (when emacs-superset-dashboard-auto-refresh-interval
     (setq emacs-superset-dashboard--timer
           (run-with-timer
            emacs-superset-dashboard-auto-refresh-interval
            emacs-superset-dashboard-auto-refresh-interval
-           #'emacs-superset-dashboard--auto-refresh))))
+           #'emacs-superset-dashboard--auto-refresh)))
+  (when emacs-superset-dashboard-git-refresh-interval
+    (setq emacs-superset-dashboard--git-refresh-timer
+          (run-with-timer
+           emacs-superset-dashboard-git-refresh-interval
+           emacs-superset-dashboard-git-refresh-interval
+           #'emacs-superset-dashboard--auto-refresh-git-state))))
 
 (defun emacs-superset-dashboard--stop-timer ()
-  "Stop the auto-refresh timer."
+  "Stop dashboard auto-refresh timers."
   (when emacs-superset-dashboard--timer
     (cancel-timer emacs-superset-dashboard--timer)
-    (setq emacs-superset-dashboard--timer nil)))
+    (setq emacs-superset-dashboard--timer nil))
+  (when emacs-superset-dashboard--git-refresh-timer
+    (cancel-timer emacs-superset-dashboard--git-refresh-timer)
+    (setq emacs-superset-dashboard--git-refresh-timer nil))
+  (when emacs-superset-dashboard--redraw-timer
+    (cancel-timer emacs-superset-dashboard--redraw-timer)
+    (setq emacs-superset-dashboard--redraw-timer nil))
+  (emacs-superset-watch-stop))
 
 (defun emacs-superset-dashboard--auto-refresh ()
-  "Auto-refresh the dashboard if it exists."
-  (when (get-buffer "*emacs-superset*")
-    (emacs-superset-dashboard--do-refresh t)))
+  "Redraw the dashboard from cached state if it is visible."
+  (if (get-buffer-window "*emacs-superset*" t)
+      (emacs-superset-dashboard-redraw)
+    (emacs-superset-dashboard--stop-timer)))
+
+(defun emacs-superset-dashboard--auto-refresh-git-state ()
+  "Refresh cached git state in the background if the dashboard is visible."
+  (if (get-buffer-window "*emacs-superset*" t)
+      (emacs-superset-dashboard--refresh-git-state-async)
+    (emacs-superset-dashboard--stop-timer)))
+
+(defun emacs-superset-dashboard--refresh-git-state-async ()
+  "Start async git refreshes and redraw as cached state updates arrive."
+  (emacs-superset-worktree-refresh-all-git-state-async
+   (lambda (_workspace)
+     (emacs-superset-dashboard-request-redraw))))
 
 ;;; Interactive commands (operate on workspace at point)
 
@@ -482,9 +547,7 @@ Skips git state refresh — just rebuilds sections from struct data."
   "Delete the workspace at point."
   (interactive)
   (if-let ((ws (emacs-superset-dashboard--workspace-at-point)))
-      (progn
-        (emacs-superset-worktree-delete ws)
-        (emacs-superset-dashboard-refresh))
+      (emacs-superset-worktree-delete ws)
     (user-error "No workspace at point")))
 
 (defun emacs-superset-dashboard-launch-at-point ()
@@ -542,10 +605,10 @@ Skips git state refresh — just rebuilds sections from struct data."
     (user-error "No workspace at point")))
 
 (defun emacs-superset-dashboard-refresh-all-git ()
-  "Refresh git state for all workspaces."
+  "Refresh git state for all workspaces asynchronously."
   (interactive)
-  (emacs-superset-dashboard--do-refresh t)
-  (message "Git state refreshed"))
+  (emacs-superset-dashboard--refresh-git-state-async)
+  (message "Git state refresh started"))
 
 (defun emacs-superset-dashboard-help ()
   "Show help for dashboard keybindings."

@@ -44,6 +44,7 @@
   (defun vterm (&optional _name)))
 
 (require 'emacs-superset-worktree)
+(require 'emacs-superset-watch)
 (require 'emacs-superset-config)
 (require 'emacs-superset-dashboard)
 (require 'emacs-superset-agent)
@@ -266,6 +267,229 @@
     (should (emacs-superset-dashboard--find-workspace-marker "/tmp/bravo"))
     (goto-char (emacs-superset-dashboard--find-workspace-marker "/tmp/bravo"))
     (should (equal (buffer-substring-no-properties (point) (+ (point) 2)) "› "))))
+
+(ert-deftest emacs-superset-test-dashboard-auto-refresh-is-lightweight ()
+  "Dashboard timer redraws cached state without forcing git refresh."
+  (let ((called :unset))
+    (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) t))
+              ((symbol-function 'emacs-superset-dashboard--do-refresh)
+               (lambda (full-git-p)
+                 (setq called full-git-p))))
+      (emacs-superset-dashboard--auto-refresh)
+      (should (eq called nil)))))
+
+(ert-deftest emacs-superset-test-dashboard-refresh-all-git-is-async ()
+  "Manual Git refresh starts async refreshes and does not call sync refresh."
+  (let ((async-called nil)
+        (sync-called nil))
+    (cl-letf (((symbol-function 'emacs-superset-dashboard--refresh-git-state-async)
+               (lambda () (setq async-called t)))
+              ((symbol-function 'emacs-superset-worktree-refresh-git-state)
+               (lambda (&rest _) (setq sync-called t))))
+      (emacs-superset-dashboard-refresh-all-git)
+      (should async-called)
+      (should-not sync-called))))
+
+(ert-deftest emacs-superset-test-apply-async-git-state-output ()
+  "Async git refresh output updates the workspace cache."
+  (let ((ws (emacs-superset-workspace-create
+             :path "/tmp/ws"
+             :branch "old"
+             :name "ws")))
+    (emacs-superset-worktree--apply-git-state-output
+     ws
+     "__branch__\nfeat/new\n__uncommitted__\n2\n__ahead_behind__\n3\t1\n")
+    (should (equal (emacs-superset-workspace-branch ws) "feat/new"))
+    (should (= (emacs-superset-workspace-uncommitted ws) 2))
+    (should (= (emacs-superset-workspace-ahead ws) 3))
+    (should (= (emacs-superset-workspace-behind ws) 1))))
+
+(ert-deftest emacs-superset-test-watch-git-dir ()
+  "Workspace gitdir is resolved with git rev-parse."
+  (let ((tmpdir (make-temp-file "superset-watch" t)))
+    (unwind-protect
+        (let* ((repo-dir (expand-file-name "repo" tmpdir))
+               (wt-dir (expand-file-name "wt" tmpdir)))
+          (make-directory repo-dir t)
+          (let ((default-directory repo-dir))
+            (call-process "git" nil nil nil "init" "-b" "main")
+            (call-process "git" nil nil nil "config" "user.email" "test@test.com")
+            (call-process "git" nil nil nil "config" "user.name" "Test")
+            (with-temp-file (expand-file-name "f" repo-dir) (insert "x"))
+            (call-process "git" nil nil nil "add" ".")
+            (call-process "git" nil nil nil "commit" "-m" "init")
+            (call-process "git" nil nil nil "worktree" "add" "-b" "feat" wt-dir "main"))
+          (let* ((ws (emacs-superset-workspace-create
+                      :path wt-dir
+                      :name "wt"
+                      :branch "feat"))
+                 (gitdir (emacs-superset-watch--git-dir ws)))
+            (should (stringp gitdir))
+            (should (file-directory-p gitdir))
+            (should (string-match-p "/\\.git/worktrees/" gitdir)))
+          (let ((default-directory repo-dir))
+            (call-process "git" nil nil nil "worktree" "remove" "--force" wt-dir)))
+      (delete-directory tmpdir t))))
+
+(ert-deftest emacs-superset-test-watch-command-worktree ()
+  "Worktree watcher command uses default ignore behavior."
+  (let ((emacs-superset-watch-command "watchexec")
+        (emacs-superset-watch-debounce 0.3)
+        (emacs-superset-watch--resolved-command nil))
+    (should (equal (emacs-superset-watch--command 'worktree "/tmp/ws")
+                   '("watchexec" "--only-emit-events" "--postpone"
+                     "--debounce" "300ms" "-w" "/tmp/ws")))))
+
+(ert-deftest emacs-superset-test-watch-command-gitdir ()
+  "Gitdir watcher command disables default and VCS ignores."
+  (let ((emacs-superset-watch-command "watchexec")
+        (emacs-superset-watch-debounce 0.3)
+        (emacs-superset-watch--resolved-command nil))
+    (should (equal (emacs-superset-watch--command 'gitdir "/tmp/ws/.git")
+                   '("watchexec" "--only-emit-events" "--postpone"
+                     "--debounce" "300ms" "--no-default-ignore"
+                     "--no-vcs-ignore" "-w" "/tmp/ws/.git")))))
+
+(ert-deftest emacs-superset-test-watch-command-uses-resolved-executable ()
+  "Watcher command uses a resolved absolute executable when available."
+  (let ((emacs-superset-watch-command "watchexec")
+        (emacs-superset-watch--resolved-command "/custom/bin/watchexec")
+        (emacs-superset-watch-debounce 0.3))
+    (should (equal (car (emacs-superset-watch--command 'worktree "/tmp/ws"))
+                   "/custom/bin/watchexec"))))
+
+(ert-deftest emacs-superset-test-watch-start-stop-registers-process ()
+  "Starting and stopping a workspace watcher manages process state."
+  (let* ((emacs-superset-watch--processes (make-hash-table :test 'equal))
+         (emacs-superset-watch--dirty-timers (make-hash-table :test 'equal))
+         (emacs-superset-watch-command "cat")
+         (emacs-superset-watch-enabled t)
+         (emacs-superset-watch--session-disabled nil)
+         (ws (emacs-superset-workspace-create
+              :path temporary-file-directory
+              :name "tmp")))
+    (cl-letf (((symbol-function 'emacs-superset-watch--dashboard-visible-p)
+               (lambda () t))
+              ((symbol-function 'emacs-superset-watch--git-dir)
+               (lambda (_workspace) nil))
+              ((symbol-function 'emacs-superset-watch--command)
+               (lambda (_kind _path) (list "cat"))))
+      (unwind-protect
+          (progn
+            (emacs-superset-watch-start-workspace ws)
+            (should (= (hash-table-count emacs-superset-watch--processes) 1))
+            (emacs-superset-watch-stop-workspace ws)
+            (should (= (hash-table-count emacs-superset-watch--processes) 0)))
+        (emacs-superset-watch-stop)))))
+
+(ert-deftest emacs-superset-test-watch-start-skips-missing-worktree ()
+  "A missing worktree path does not start a restart-looping watcher."
+  (let* ((emacs-superset-watch--processes (make-hash-table :test 'equal))
+         (emacs-superset-watch-command "cat")
+         (emacs-superset-watch-enabled t)
+         (emacs-superset-watch--session-disabled nil)
+         (ws (emacs-superset-workspace-create
+              :path "/tmp/definitely-missing-superset-worktree"
+              :name "missing")))
+    (cl-letf (((symbol-function 'emacs-superset-watch--dashboard-visible-p)
+               (lambda () t))
+              ((symbol-function 'emacs-superset-watch--git-dir)
+               (lambda (_workspace) nil))
+              ((symbol-function 'emacs-superset-watch--command)
+               (lambda (_kind _path) (list "cat"))))
+      (emacs-superset-watch-start-workspace ws)
+      (should (= (hash-table-count emacs-superset-watch--processes) 0)))))
+
+(ert-deftest emacs-superset-test-watch-dirty-debounces-refresh ()
+  "Multiple watcher events debounce to one async Git refresh."
+  (let* ((emacs-superset-watch--dirty-timers (make-hash-table :test 'equal))
+         (emacs-superset-watch-debounce 0.01)
+         (emacs-superset--workspaces (make-hash-table :test 'equal))
+         (ws (emacs-superset-workspace-create :path "/tmp/ws" :name "ws"))
+         (calls 0))
+    (emacs-superset--register-workspace ws)
+    (cl-letf (((symbol-function 'emacs-superset-worktree-refresh-git-state-async)
+               (lambda (workspace &optional callback)
+                 (cl-incf calls)
+                 (when callback (funcall callback workspace)))))
+      (emacs-superset-watch--mark-dirty ws)
+      (emacs-superset-watch--mark-dirty ws)
+      (sleep-for 0.05)
+      (should (= calls 1)))))
+
+(ert-deftest emacs-superset-test-git-refresh-event-during-active-refresh-pends ()
+  "A refresh request during an active refresh schedules one more refresh."
+  (let* ((emacs-superset-worktree--git-refresh-processes
+          (make-hash-table :test 'equal))
+         (emacs-superset-worktree--git-refresh-pending-paths
+          (make-hash-table :test 'equal))
+         (ws (emacs-superset-workspace-create :path "/tmp/ws" :name "ws"))
+         (callback (lambda (_workspace) nil)))
+    (puthash "/tmp/ws" 'fake-process
+             emacs-superset-worktree--git-refresh-processes)
+    (cl-letf (((symbol-function 'process-live-p)
+               (lambda (_process) t)))
+      (emacs-superset-worktree-refresh-git-state-async ws callback)
+      (should (equal (gethash "/tmp/ws"
+                              emacs-superset-worktree--git-refresh-pending-paths)
+                     (list ws callback))))))
+
+(ert-deftest emacs-superset-test-watch-missing-command-disables-session ()
+  "Missing watcher executable disables watchers without an error."
+  (let ((emacs-superset-watch-command "definitely-not-watchexec")
+        (emacs-superset-watch-enabled t)
+        (emacs-superset-watch--session-disabled nil)
+        (emacs-superset-watch--missing-command-warned nil)
+        (emacs-superset-watch--resolved-command nil))
+    (cl-letf (((symbol-function 'display-warning) (lambda (&rest _args) nil)))
+      (should-not (emacs-superset-watch--available-p))
+      (should emacs-superset-watch--session-disabled))))
+
+(ert-deftest emacs-superset-test-watch-restart-retries-after-missing-command ()
+  "Restart clears the per-session missing-command disable flag."
+  (let ((emacs-superset-watch--session-disabled t)
+        (emacs-superset-watch--missing-command-warned t)
+        (emacs-superset-watch--resolved-command "/old/watchexec")
+        (started-disabled nil))
+    (cl-letf (((symbol-function 'emacs-superset-watch-stop) (lambda () nil))
+              ((symbol-function 'emacs-superset-watch-start)
+               (lambda ()
+                 (setq started-disabled emacs-superset-watch--session-disabled))))
+      (emacs-superset-watch-restart)
+      (should-not started-disabled)
+      (should-not emacs-superset-watch--missing-command-warned)
+      (should-not emacs-superset-watch--resolved-command))))
+
+(ert-deftest emacs-superset-test-reconcile-updates-affected-watchers ()
+  "Reconcile stops removed workspace watchers and starts added ones."
+  (let* ((emacs-superset--workspaces (make-hash-table :test 'equal))
+         (old (emacs-superset-workspace-create
+               :path "/tmp/old"
+               :name "old"
+               :branch "old"))
+         (started nil)
+         (stopped nil)
+         (refreshed nil))
+    (emacs-superset--register-workspace old)
+    (cl-letf (((symbol-function 'emacs-superset--repo-root)
+               (lambda (&optional _directory) "/repo"))
+              ((symbol-function 'emacs-superset-worktree--git-list)
+               (lambda (_repo-root) '("/tmp/new")))
+              ((symbol-function 'emacs-superset-worktree--branch-at)
+               (lambda (_path) "new"))
+              ((symbol-function 'emacs-superset-watch-stop-workspace)
+               (lambda (workspace) (push (emacs-superset-workspace-path workspace) stopped)))
+              ((symbol-function 'emacs-superset-watch-start-workspace)
+               (lambda (workspace) (push (emacs-superset-workspace-path workspace) started)))
+              ((symbol-function 'emacs-superset-worktree-refresh-git-state-async)
+               (lambda (workspace &optional _callback)
+                 (push (emacs-superset-workspace-path workspace) refreshed))))
+      (emacs-superset-worktree-reconcile)
+      (should (equal stopped '("/tmp/old")))
+      (should (equal started '("/tmp/new")))
+      (should (equal refreshed '("/tmp/new")))
+      (should-not (emacs-superset--get-workspace "/tmp/old"))
+      (should (emacs-superset--get-workspace "/tmp/new")))))
 
 ;;; ---- Agent: Codex integration ----
 

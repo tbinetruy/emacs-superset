@@ -55,6 +55,15 @@ Returns the new workspace struct."
         (emacs-superset-tab-create ws))
       (when (fboundp 'emacs-superset-config-run-setup)
         (emacs-superset-config-run-setup ws))
+      (when (fboundp 'emacs-superset-dashboard-redraw)
+        (emacs-superset-dashboard-redraw))
+      (when (fboundp 'emacs-superset-watch-start-workspace)
+        (emacs-superset-watch-start-workspace ws))
+      (emacs-superset-worktree-refresh-git-state-async
+       ws
+       (lambda (_workspace)
+         (when (fboundp 'emacs-superset-dashboard-request-redraw)
+           (emacs-superset-dashboard-request-redraw))))
       (message "Created workspace: %s (branch: %s)" name branch)
       ws)))
 
@@ -114,7 +123,11 @@ Prompts for the base branch first, then the new branch name."
             (magit-run-git "branch" "-D" branch))
         (error nil))
       ;; Unregister
+      (when (fboundp 'emacs-superset-watch-stop-workspace)
+        (emacs-superset-watch-stop-workspace workspace))
       (emacs-superset--unregister-workspace workspace)
+      (when (fboundp 'emacs-superset-dashboard-redraw)
+        (emacs-superset-dashboard-redraw))
       (message "Deleted workspace: %s" name))))
 
 ;;; Worktree listing
@@ -129,12 +142,15 @@ Prompts for the base branch first, then the new branch name."
 Discovers all worktrees (excluding the main repo itself), removes
 tracked workspaces whose worktrees no longer exist on disk."
   (let* ((repo-root (emacs-superset--normalize-path (emacs-superset--repo-root)))
-         (git-worktrees (emacs-superset-worktree--git-list repo-root)))
+         (git-worktrees (emacs-superset-worktree--git-list repo-root))
+         (removed nil)
+         (added nil))
     ;; Remove workspaces whose paths no longer exist in git worktree list
     (dolist (ws (emacs-superset--all-workspaces))
       (unless (member (emacs-superset--normalize-path
                        (emacs-superset-workspace-path ws))
                       git-worktrees)
+        (push ws removed)
         (emacs-superset--unregister-workspace ws)))
     ;; Add all worktrees we're not tracking (skip the main repo itself)
     (dolist (wt-path git-worktrees)
@@ -142,13 +158,26 @@ tracked workspaces whose worktrees no longer exist on disk."
                   (emacs-superset--get-workspace wt-path))
         (let* ((name (file-name-nondirectory (directory-file-name wt-path)))
                (branch (emacs-superset-worktree--branch-at wt-path)))
-          (emacs-superset--register-workspace
-           (emacs-superset-workspace-create
-            :path wt-path
-            :branch branch
-            :name name
-            :agent-type emacs-superset-default-agent
-            :created-at (float-time))))))))
+          (let ((workspace
+                 (emacs-superset-workspace-create
+                  :path wt-path
+                  :branch branch
+                  :name name
+                  :agent-type emacs-superset-default-agent
+                  :created-at (float-time))))
+            (emacs-superset--register-workspace workspace)
+            (push workspace added)))))
+    (when (fboundp 'emacs-superset-watch-stop-workspace)
+      (dolist (workspace removed)
+        (emacs-superset-watch-stop-workspace workspace)))
+    (dolist (workspace added)
+      (when (fboundp 'emacs-superset-watch-start-workspace)
+        (emacs-superset-watch-start-workspace workspace))
+      (emacs-superset-worktree-refresh-git-state-async
+       workspace
+       (lambda (_workspace)
+         (when (fboundp 'emacs-superset-dashboard-request-redraw)
+           (emacs-superset-dashboard-request-redraw)))))))
 
 (defun emacs-superset-worktree--git-list (repo-root)
   "Return list of worktree paths reported by git in REPO-ROOT."
@@ -172,6 +201,29 @@ tracked workspaces whose worktrees no longer exist on disk."
        (buffer-string)))))
 
 ;;; Git state refresh
+
+(defvar emacs-superset-worktree--git-refresh-processes
+  (make-hash-table :test 'equal)
+  "In-flight async git refresh processes keyed by normalized workspace path.")
+
+(defcustom emacs-superset-git-refresh-max-concurrent 2
+  "Maximum number of concurrent async git state refresh processes."
+  :type 'integer
+  :group 'emacs-superset)
+
+(defvar emacs-superset-worktree--git-refresh-queue nil
+  "Queued async git refresh requests as (WORKSPACE CALLBACK) entries.")
+
+(defvar emacs-superset-worktree--git-refresh-queued-paths
+  (make-hash-table :test 'equal)
+  "Workspace paths currently queued for async git refresh.")
+
+(defvar emacs-superset-worktree--git-refresh-pending-paths
+  (make-hash-table :test 'equal)
+  "Workspace paths that need another refresh after the active one exits.")
+
+(defvar emacs-superset-worktree--git-refresh-active-count 0
+  "Number of currently running async git refresh processes.")
 
 (defun emacs-superset-worktree-refresh-git-state (workspace)
   "Refresh git state (branch, uncommitted, ahead, behind) for WORKSPACE."
@@ -209,6 +261,150 @@ tracked workspaces whose worktrees no longer exist on disk."
   (setf (emacs-superset-workspace-ports workspace)
         (emacs-superset-worktree--listening-ports workspace))
   workspace)
+
+(defun emacs-superset-worktree-refresh-git-state-async (workspace &optional callback)
+  "Refresh cached git state for WORKSPACE asynchronously.
+CALLBACK, when non-nil, is called with WORKSPACE after a successful refresh."
+  (let* ((path (emacs-superset--normalize-path
+                (emacs-superset-workspace-path workspace)))
+         (existing (gethash path emacs-superset-worktree--git-refresh-processes)))
+    (if (and existing (process-live-p existing))
+        (puthash path (list workspace callback)
+                 emacs-superset-worktree--git-refresh-pending-paths)
+      (if (and emacs-superset-git-refresh-max-concurrent
+               (>= emacs-superset-worktree--git-refresh-active-count
+                   emacs-superset-git-refresh-max-concurrent))
+          (unless (gethash path emacs-superset-worktree--git-refresh-queued-paths)
+            (puthash path t emacs-superset-worktree--git-refresh-queued-paths)
+            (setq emacs-superset-worktree--git-refresh-queue
+                  (append emacs-superset-worktree--git-refresh-queue
+                          (list (list workspace callback)))))
+        (emacs-superset-worktree--start-git-state-refresh workspace callback)))))
+
+(defun emacs-superset-worktree--start-git-state-refresh (workspace callback)
+  "Start an async git state refresh for WORKSPACE with CALLBACK."
+  (let* ((path (emacs-superset--normalize-path
+                (emacs-superset-workspace-path workspace)))
+         (buffer (generate-new-buffer
+                  (format " *emacs-superset-git:%s*"
+                          (emacs-superset-workspace-name workspace))))
+         (default-directory (file-name-as-directory path))
+         (process
+          (make-process
+           :name (format "emacs-superset-git:%s"
+                         (emacs-superset-workspace-name workspace))
+           :buffer buffer
+           :noquery t
+           :connection-type 'pipe
+           :command
+           (list shell-file-name shell-command-switch
+                 (concat
+                  "printf '__branch__\\n'; "
+                  "git rev-parse --abbrev-ref HEAD 2>/dev/null; "
+                  "printf '__uncommitted__\\n'; "
+                  "git --no-optional-locks status --porcelain "
+                  "--untracked-files=normal 2>/dev/null | sed '/^$/d' | wc -l; "
+                  "printf '__ahead_behind__\\n'; "
+                  "git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null "
+                  "|| printf '0\\t0\\n'"))
+           :sentinel #'emacs-superset-worktree--git-refresh-sentinel)))
+    (cl-incf emacs-superset-worktree--git-refresh-active-count)
+    (process-put process 'emacs-superset-workspace-path path)
+    (process-put process 'emacs-superset-workspace workspace)
+    (process-put process 'emacs-superset-callback callback)
+    (puthash path process emacs-superset-worktree--git-refresh-processes)
+    process))
+
+(defun emacs-superset-worktree--git-refresh-sentinel (process _event)
+  "Apply async git refresh results from PROCESS."
+  (unless (process-live-p process)
+    (let* ((path (process-get process 'emacs-superset-workspace-path))
+           (workspace (process-get process 'emacs-superset-workspace))
+           (callback (process-get process 'emacs-superset-callback))
+           (buffer (process-buffer process)))
+      (remhash path emacs-superset-worktree--git-refresh-processes)
+      (unwind-protect
+          (when (and buffer
+                     (buffer-live-p buffer)
+                     (zerop (process-exit-status process))
+                     (eq workspace (emacs-superset--get-workspace path)))
+            (with-current-buffer buffer
+              (emacs-superset-worktree--apply-git-state-output
+               workspace
+               (buffer-string)))
+            (when callback
+              (funcall callback workspace)))
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))
+        (setq emacs-superset-worktree--git-refresh-active-count
+              (max 0 (1- emacs-superset-worktree--git-refresh-active-count)))
+        (when-let ((pending (gethash
+                             path
+                             emacs-superset-worktree--git-refresh-pending-paths)))
+          (remhash path emacs-superset-worktree--git-refresh-pending-paths)
+          (pcase-let ((`(,pending-workspace ,pending-callback) pending))
+            (when (eq pending-workspace (emacs-superset--get-workspace path))
+              (emacs-superset-worktree-refresh-git-state-async
+               pending-workspace pending-callback))))
+        (emacs-superset-worktree--pump-git-refresh-queue)))))
+
+(defun emacs-superset-worktree--pump-git-refresh-queue ()
+  "Start queued async git refreshes up to the concurrency limit."
+  (while (and emacs-superset-worktree--git-refresh-queue
+              (or (null emacs-superset-git-refresh-max-concurrent)
+                  (< emacs-superset-worktree--git-refresh-active-count
+                     emacs-superset-git-refresh-max-concurrent)))
+    (pcase-let* ((`(,workspace ,callback)
+                  (pop emacs-superset-worktree--git-refresh-queue))
+                 (path (emacs-superset--normalize-path
+                        (emacs-superset-workspace-path workspace))))
+      (remhash path emacs-superset-worktree--git-refresh-queued-paths)
+      (when (and (eq workspace (emacs-superset--get-workspace path))
+                 (not (let ((process (gethash
+                                       path
+                                       emacs-superset-worktree--git-refresh-processes)))
+                        (and process (process-live-p process)))))
+        (emacs-superset-worktree--start-git-state-refresh workspace callback)))))
+
+(defun emacs-superset-worktree--apply-git-state-output (workspace output)
+  "Apply parsed async git state OUTPUT to WORKSPACE."
+  (let ((branch nil)
+        (uncommitted nil)
+        (ahead 0)
+        (behind 0)
+        (section nil))
+    (dolist (line (split-string output "\n" t))
+      (cond
+       ((equal line "__branch__")
+        (setq section 'branch))
+       ((equal line "__uncommitted__")
+        (setq section 'uncommitted))
+       ((equal line "__ahead_behind__")
+        (setq section 'ahead-behind))
+       ((eq section 'branch)
+        (setq branch (string-trim line)
+              section nil))
+       ((eq section 'uncommitted)
+        (setq uncommitted (string-to-number (string-trim line))
+              section nil))
+       ((eq section 'ahead-behind)
+        (when (string-match "\\([0-9]+\\)[[:space:]]+\\([0-9]+\\)" line)
+          (setq ahead (string-to-number (match-string 1 line))
+                behind (string-to-number (match-string 2 line))))
+        (setq section nil))))
+    (when branch
+      (setf (emacs-superset-workspace-branch workspace) branch))
+    (when uncommitted
+      (setf (emacs-superset-workspace-uncommitted workspace) uncommitted))
+    (setf (emacs-superset-workspace-ahead workspace) ahead)
+    (setf (emacs-superset-workspace-behind workspace) behind)
+    workspace))
+
+(defun emacs-superset-worktree-refresh-all-git-state-async (&optional callback)
+  "Refresh cached git state for all tracked workspaces asynchronously.
+CALLBACK is passed to each individual workspace refresh."
+  (dolist (workspace (emacs-superset--all-workspaces))
+    (emacs-superset-worktree-refresh-git-state-async workspace callback)))
 
 (defun emacs-superset-worktree--listening-ports (workspace)
   "Return a list of listening TCP port numbers for WORKSPACE's process trees.
