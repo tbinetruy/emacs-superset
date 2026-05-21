@@ -43,6 +43,29 @@ and provides a dashboard to monitor everything.
 - [[https://github.com/magit/transient][transient]] 0.7+
 - [[https://codeberg.org/akib/emacs-eat][eat]] 0.9+
 
+** Optional external tools
+
+- [[https://watchexec.github.io/][watchexec]] -- enables event-driven Git state refreshes in the dashboard.
+  Without it, emacs-superset still works and falls back to async periodic
+  refreshes plus manual =R= in the dashboard.
+
+Install examples:
+
+#+begin_src sh
+# macOS
+brew install watchexec
+
+# Arch Linux
+pacman -S watchexec
+
+# Rust/cargo
+cargo install watchexec-cli
+#+end_src
+
+If Emacs cannot find the binary, set =emacs-superset-watch-command= to its
+absolute path. This is sometimes needed when GUI/Doom Emacs has a different
+=PATH= than your shell.
+
 * Installation
 
 ** Doom Emacs
@@ -215,7 +238,13 @@ Or in =.emacs-superset.el=:
 | =emacs-superset-agent-types=                | (alist)          | Agent type to CLI command mapping |
 | =emacs-superset-codex-json-events=          | =t=              | Use =codex exec --json= for prompted Codex launches |
 | =emacs-superset-codex-session-watch=        | =nil=            | Fallback session JSONL watcher if Codex hooks cannot be installed |
-| =emacs-superset-dashboard-auto-refresh-interval= | =5=         | Dashboard refresh seconds (nil to disable) |
+| =emacs-superset-dashboard-auto-refresh-interval= | =5=         | Cached dashboard redraw seconds (nil to disable) |
+| =emacs-superset-dashboard-git-refresh-interval= | =30=        | Background git refresh seconds (nil to disable) |
+| =emacs-superset-dashboard-redraw-debounce=  | =0.2=            | Debounce delay for agent/status redraws |
+| =emacs-superset-watch-enabled=             | =t=              | Use =watchexec= for event-driven Git state refreshes |
+| =emacs-superset-watch-command=             | ="watchexec"=    | Filesystem watcher executable   |
+| =emacs-superset-watch-debounce=            | =0.3=            | Per-workspace watcher debounce seconds |
+| =emacs-superset-git-refresh-max-concurrent= | =2=             | Concurrent async Git refresh limit |
 
 ** Custom agent types
 
